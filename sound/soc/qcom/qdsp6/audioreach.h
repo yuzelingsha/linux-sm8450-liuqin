@@ -29,6 +29,8 @@ struct q6apm_graph;
 #define MODULE_ID_MP3_DECODE		0x0700103B
 #define MODULE_ID_GAPLESS		0x0700104D
 #define MODULE_ID_DISPLAY_PORT_SINK	0x07001069
+#define MODULE_ID_AUDIO_IF_SINK		0x0700117C
+#define MODULE_ID_AUDIO_IF_SOURCE	0x0700117D
 
 #define APM_CMD_GET_SPF_STATE		0x01001021
 #define APM_CMD_RSP_GET_SPF_STATE	0x02001007
@@ -474,6 +476,40 @@ struct param_id_i2s_intf_cfg {
 #define PORT_ID_I2S_OUPUT		1
 #define I2S_STACK_SIZE			2048
 
+#define PARAM_ID_AUDIO_IF_INTF_CFG	0x08001B11
+
+struct param_id_audio_if_intf_cfg {
+	uint16_t qaif_type;
+	uint16_t intf_idx;
+	uint16_t intf_mode;
+	uint16_t ctrl_data_out_enable;
+	uint32_t active_slot_mask;
+	uint16_t nslots_per_frame;
+	uint16_t slot_width;
+	uint32_t active_lane_mask;
+	uint32_t frame_sync_rate;
+	uint16_t frame_sync_src;
+	uint16_t frame_sync_mode;
+	uint16_t invert_frame_sync_pulse;
+	uint16_t frame_sync_data_delay;
+	uint16_t bit_clk_type;
+	uint8_t inv_int_bit_clk;
+	uint8_t inv_ext_bit_clk;
+} __packed;
+
+#define PARAM_ID_HW_EP_FRAME_DURATION	0x08001B2F
+#define AUDIO_IF_FRAME_DURATION_US			1000
+#define AUDIO_IF_FRAME_DURATION_NORMALIZATION_ENABLE	1
+#define AUDIO_IF_FRAME_DURATION_MIN_US			1
+#define AUDIO_IF_FRAME_DURATION_MAX_US			100000
+
+struct param_id_hw_ep_frame_duration {
+	uint32_t frame_duration_in_us;
+	uint32_t allow_frame_duration_normalization;
+	uint32_t min_normalized_frame_dur_us;
+	uint32_t max_normalized_frame_dur_us;
+} __packed;
+
 #define PARAM_ID_DISPLAY_PORT_INTF_CFG		0x08001154
 
 struct param_id_display_port_intf_cfg {
@@ -730,6 +766,23 @@ struct audioreach_module {
 	uint32_t data_format;
 	uint32_t hw_interface_type;
 
+	/* Audio IF module (TDM/PCM/I2S) */
+	u32 slot_mask;
+	u32 active_lane_mask;
+	u32 frame_sync_rate;
+	u16 qaif_type;
+	u16 sync_src;
+	u16 ctrl_data_out_enable;
+	u16 nslots_per_frame;
+	u16 slot_width;
+	u16 intf_mode;
+	u16 sync_mode;
+	u16 ctrl_invert_sync_pulse;
+	u16 ctrl_sync_data_delay;
+	u16 bit_clk_type;
+	u8 inv_int_bit_clk;
+	u8 inv_ext_bit_clk;
+
 	/* PCM module specific */
 	uint32_t interleave_type;
 
@@ -759,6 +812,9 @@ struct audioreach_module_config {
 	u32	channel_allocation;
 	u32	sd_line_mask;
 	int	fmt;
+	u32	slot_mask;
+	u16	nslots_per_frame;
+	u16	slot_width;
 	struct snd_codec codec;
 	u8 channel_map[AR_PCM_MAX_NUM_CHANNEL];
 };
