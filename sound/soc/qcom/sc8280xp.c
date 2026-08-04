@@ -7,6 +7,7 @@
 #include <sound/soc.h>
 #include <sound/soc-dapm.h>
 #include <sound/pcm.h>
+#include <sound/pcm_params.h>
 #include <linux/soundwire/sdw.h>
 #include <sound/jack.h>
 #include <linux/input-event-codes.h>
@@ -22,6 +23,69 @@ struct sc8280xp_snd_data {
 	struct snd_soc_jack dp_jack[8];
 	bool jack_setup;
 };
+
+static bool sc8280xp_is_tdm_dai(const struct snd_soc_dai *dai)
+{
+	return dai->id >= PRIMARY_TDM_RX_0 && dai->id <= QUINARY_TDM_TX_7;
+}
+
+static int sc8280xp_tdm_hw_params(struct snd_pcm_substream *substream,
+				  struct snd_pcm_hw_params *params)
+{
+	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+	struct snd_soc_dai *codec_dai;
+	struct qcom_snd_tdm_slot_cfg cpu_cfg;
+	struct qcom_snd_tdm_slot_cfg codec_cfg;
+	int bclk_freq;
+	int ret;
+	int i;
+
+	ret = qcom_snd_get_dai_tdm_slots(rtd, &cpu_cfg, &codec_cfg);
+	if (ret)
+		return ret == -EINVAL ? 0 : ret;
+
+	if (!cpu_cfg.slots)
+		return 0;
+
+	ret = snd_soc_dai_set_fmt(cpu_dai, SND_SOC_DAIFMT_BP_FP);
+	if (ret && ret != -ENOTSUPP)
+		return ret;
+
+	/* Match the upstream sm8450 machine data for codec-side serial format. */
+	if (of_device_is_compatible(rtd->card->dev->of_node, "qcom,sm8450-sndcard")) {
+		for_each_rtd_codec_dais(rtd, i, codec_dai) {
+			ret = snd_soc_dai_set_fmt(codec_dai,
+						  SND_SOC_DAIFMT_BC_FC |
+						  SND_SOC_DAIFMT_NB_NF |
+						  SND_SOC_DAIFMT_I2S);
+			if (ret && ret != -ENOTSUPP)
+				return ret;
+		}
+	}
+
+	ret = qcom_snd_apply_dai_tdm_slots_cfg(rtd, &cpu_cfg, &codec_cfg);
+	if (ret)
+		return ret;
+
+	bclk_freq = snd_soc_tdm_params_to_bclk(params, cpu_cfg.slot_width,
+						cpu_cfg.slots, 1);
+	if (bclk_freq <= 0)
+		return -EINVAL;
+
+	/*
+	 * Newer q6apm owns a child BCLK. The 6.17 implementation has no
+	 * set_sysclk callback, so -ENOTSUPP is the expected compatibility path.
+	 */
+	ret = snd_soc_dai_set_sysclk(cpu_dai, LPAIF_MI2S_BCLK, bclk_freq,
+				     SND_SOC_CLOCK_IN);
+	if (ret && ret != -ENOTSUPP) {
+		dev_err(rtd->dev, "%s: failed to set cpu sysclk: %d\n", __func__, ret);
+		return ret;
+	}
+
+	return 0;
+}
 
 static int sc8280xp_snd_init(struct snd_soc_pcm_runtime *rtd)
 {
@@ -70,6 +134,9 @@ static void sc8280xp_snd_shutdown(struct snd_pcm_substream *substream)
 	struct sc8280xp_snd_data *pdata = snd_soc_card_get_drvdata(rtd->card);
 	struct sdw_stream_runtime *sruntime = pdata->sruntime[cpu_dai->id];
 
+	if (sc8280xp_is_tdm_dai(cpu_dai))
+		return;
+
 	pdata->sruntime[cpu_dai->id] = NULL;
 	sdw_release_stream(sruntime);
 }
@@ -82,11 +149,15 @@ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 					SNDRV_PCM_HW_PARAM_RATE);
 	struct snd_interval *channels = hw_param_interval(params,
 					SNDRV_PCM_HW_PARAM_CHANNELS);
+	struct snd_mask *fmt = hw_param_mask(params, SNDRV_PCM_HW_PARAM_FORMAT);
 
 	rate->min = rate->max = 48000;
 	channels->min = 2;
 	channels->max = 2;
 	switch (cpu_dai->id) {
+	case PRIMARY_TDM_RX_0 ... QUINARY_TDM_TX_7:
+		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
+		break;
 	case TX_CODEC_DMA_TX_0:
 	case TX_CODEC_DMA_TX_1:
 	case TX_CODEC_DMA_TX_2:
@@ -108,7 +179,21 @@ static int sc8280xp_snd_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 	struct sc8280xp_snd_data *pdata = snd_soc_card_get_drvdata(rtd->card);
 
+	if (sc8280xp_is_tdm_dai(cpu_dai))
+		return sc8280xp_tdm_hw_params(substream, params);
+
 	return qcom_snd_sdw_hw_params(substream, params, &pdata->sruntime[cpu_dai->id]);
+}
+
+static int sc8280xp_snd_startup(struct snd_pcm_substream *substream)
+{
+	struct snd_soc_pcm_runtime *rtd = snd_soc_substream_to_rtd(substream);
+	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
+
+	if (sc8280xp_is_tdm_dai(cpu_dai))
+		return 0;
+
+	return qcom_snd_sdw_startup(substream);
 }
 
 static int sc8280xp_snd_prepare(struct snd_pcm_substream *substream)
@@ -117,6 +202,9 @@ static int sc8280xp_snd_prepare(struct snd_pcm_substream *substream)
 	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 	struct sc8280xp_snd_data *data = snd_soc_card_get_drvdata(rtd->card);
 	struct sdw_stream_runtime *sruntime = data->sruntime[cpu_dai->id];
+
+	if (sc8280xp_is_tdm_dai(cpu_dai))
+		return 0;
 
 	return qcom_snd_sdw_prepare(substream, sruntime,
 				    &data->stream_prepared[cpu_dai->id]);
@@ -129,12 +217,15 @@ static int sc8280xp_snd_hw_free(struct snd_pcm_substream *substream)
 	struct snd_soc_dai *cpu_dai = snd_soc_rtd_to_cpu(rtd, 0);
 	struct sdw_stream_runtime *sruntime = data->sruntime[cpu_dai->id];
 
+	if (sc8280xp_is_tdm_dai(cpu_dai))
+		return 0;
+
 	return qcom_snd_sdw_hw_free(substream, sruntime,
 				    &data->stream_prepared[cpu_dai->id]);
 }
 
 static const struct snd_soc_ops sc8280xp_be_ops = {
-	.startup = qcom_snd_sdw_startup,
+	.startup = sc8280xp_snd_startup,
 	.shutdown = sc8280xp_snd_shutdown,
 	.hw_params = sc8280xp_snd_hw_params,
 	.hw_free = sc8280xp_snd_hw_free,
