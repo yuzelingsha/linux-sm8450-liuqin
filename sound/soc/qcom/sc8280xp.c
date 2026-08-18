@@ -43,7 +43,7 @@ static int sc8280xp_tdm_hw_params(struct snd_pcm_substream *substream,
 
 	ret = qcom_snd_get_dai_tdm_slots(rtd, &cpu_cfg, &codec_cfg);
 	if (ret)
-		return ret == -EINVAL ? 0 : ret;
+		return ret == -ENOENT ? 0 : ret;
 
 	if (!cpu_cfg.slots)
 		return 0;
