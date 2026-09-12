@@ -1,0 +1,27 @@
+name: Liuqin kernel
+on:
+  push:
+    branches: [liuqin-6.17]
+  pull_request:
+    branches: [liuqin-6.17]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: liuqin-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/xiaomipad-6pro-mainline
+          ref: main
+          path: project
+          persist-credentials: false
+      - uses: ./project/.github/actions/kernel
+        with:
+          kernel-repository: ${{ github.repository }}
+          revision: ${{ github.sha }}
