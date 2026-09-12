@@ -23,6 +23,7 @@ struct q6apm_graph;
 #define MODULE_ID_CODEC_DMA_SOURCE	0x07001024
 #define MODULE_ID_I2S_SINK		0x0700100A
 #define MODULE_ID_I2S_SOURCE		0x0700100B
+#define MODULE_ID_TDM_SINK		0x0700100E
 #define MODULE_ID_DATA_LOGGING		0x0700101A
 #define MODULE_ID_AAC_DEC		0x0700101F
 #define MODULE_ID_FLAC_DEC		0x0700102F
@@ -460,6 +461,36 @@ struct param_id_i2s_intf_cfg {
 	uint32_t intf_idx;
 	uint16_t sd_line_idx;
 	uint16_t ws_src;
+} __packed;
+
+/* Legacy AudioReach PCM/TDM endpoint API (not the pre-SPF AFE ABI). */
+#define PARAM_ID_TDM_INTF_CFG			0x0800101B
+struct param_id_tdm_intf_cfg {
+	u32 lpaif_type;
+	u32 intf_idx;
+	u16 sync_src;
+	u16 ctrl_data_out_enable;
+	u32 slot_mask;
+	u16 nslots_per_frame;
+	u16 slot_width;
+	u16 sync_mode;
+	u16 ctrl_invert_sync_pulse;
+	u16 ctrl_sync_data_delay;
+	u16 reserved;
+} __packed;
+
+#define PARAM_ID_TDM_LANE_CFG			0x0800106A
+struct param_id_tdm_lane_cfg {
+	u16 lane_mask;
+	u16 reserved;
+} __packed;
+
+#define PARAM_ID_HW_INTF_CLK_CFG			0x0800113C
+struct param_id_hw_intf_clk_cfg {
+	u32 clock_id;
+	u32 clock_freq;
+	u32 clock_attri;
+	u32 clock_root;
 } __packed;
 
 #define I2S_INTF_TYPE_PRIMARY		0

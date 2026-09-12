@@ -73,6 +73,30 @@ config SERIAL_AMBA_PL011_CONSOLE
 	  your boot loader (lilo or loadlin) about how to pass options to the
 	  kernel at boot time.)
 
+config SERIAL_EARLYCON_SIMPLEFB
+	bool "Early console on a DT simple-framebuffer"
+	depends on OF_EARLY_FLATTREE
+	# Same as EFI_EARLYCON, which needs early_memremap_prot() for the same
+	# reason. depends on would be a recursive dependency: EFI_EARLYCON selects
+	# this and reaches SERIAL_CORE, which this entry selects.
+	select ARCH_USE_MEMREMAP_PROT
+	select FONT_SUPPORT
+	select FONT_8x16
+	select SERIAL_CORE
+	select SERIAL_CORE_CONSOLE
+	select SERIAL_EARLYCON
+	help
+	  Print early boot messages onto the framebuffer the bootloader left
+	  scanning out, described by a simple-framebuffer node under /chosen.
+	  Enable it with "earlycon=simplefb keep_bootcon" on the kernel command
+	  line. Both matter: a bare "earlycon" is claimed by CONFIG_ACPI_SPCR_TABLE
+	  before the DT is consulted, and without keep_bootcon the VT console
+	  unregisters this one at console_init(), which runs before every initcall.
+
+	  On a device with no accessible debug UART this is the only way to see
+	  anything before fbcon takes over at device_initcall, by which point
+	  the RPMh, clock and SoC drivers have already run.
+
 config SERIAL_EARLYCON_SEMIHOST
 	bool "Early console using Arm compatible semihosting"
 	depends on ARM64 || ARM || RISCV

@@ -739,7 +739,7 @@ static int audioreach_widget_audio_if_module_load(struct audioreach_module *mod,
 	u32 val;
 
 	mod_elem = mod_array->value;
-	while (tkn_count <= (le32_to_cpu(mod_array->num_elems) - 1)) {
+	while (tkn_count < le32_to_cpu(mod_array->num_elems)) {
 		val = le32_to_cpu(mod_elem->value);
 		switch (le32_to_cpu(mod_elem->token)) {
 		case AR_TKN_U32_MODULE_HW_IF_IDX:
@@ -879,6 +879,9 @@ static int audioreach_widget_load_buffer(struct snd_soc_component *component,
 	case MODULE_ID_I2S_SINK:
 	case MODULE_ID_I2S_SOURCE:
 		audioreach_widget_i2s_module_load(mod, mod_array);
+		break;
+	case MODULE_ID_TDM_SINK:
+		/* The legacy endpoint only consumes the common module tokens. */
 		break;
 	case MODULE_ID_AUDIO_IF_SINK:
 	case MODULE_ID_AUDIO_IF_SOURCE:

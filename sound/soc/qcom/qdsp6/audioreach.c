@@ -152,6 +152,31 @@ struct apm_i2s_module_intf_cfg {
 
 #define APM_I2S_INTF_CFG_PSIZE ALIGN(sizeof(struct apm_i2s_module_intf_cfg), 8)
 
+struct apm_tdm_module_intf_cfg {
+	struct apm_module_param_data param_data;
+	struct param_id_tdm_intf_cfg cfg;
+} __packed;
+
+#define APM_TDM_INTF_CFG_PSIZE ALIGN(sizeof(struct apm_tdm_module_intf_cfg), 8)
+
+struct apm_tdm_module_lane_cfg {
+	struct apm_module_param_data param_data;
+	struct param_id_tdm_lane_cfg cfg;
+} __packed;
+
+#define APM_TDM_LANE_CFG_PSIZE ALIGN(sizeof(struct apm_tdm_module_lane_cfg), 8)
+
+struct apm_module_hw_intf_clk_cfg {
+	struct apm_module_param_data param_data;
+	struct param_id_hw_intf_clk_cfg cfg;
+} __packed;
+
+#define APM_HW_INTF_CLK_CFG_PSIZE ALIGN(sizeof(struct apm_module_hw_intf_clk_cfg), 8)
+
+static_assert(sizeof(struct param_id_tdm_intf_cfg) == 28);
+static_assert(sizeof(struct param_id_tdm_lane_cfg) == 4);
+static_assert(sizeof(struct param_id_hw_intf_clk_cfg) == 16);
+
 struct apm_audio_if_module_intf_cfg {
 	struct apm_module_param_data param_data;
 	struct param_id_audio_if_intf_cfg cfg;
@@ -1029,6 +1054,101 @@ static int audioreach_i2s_set_media_format(struct q6apm_graph *graph,
 	return rc;
 }
 
+/*
+ * This is a deliberately narrow, silent diagnostic for the exact liuqin
+ * Forte graph.  The parameter IDs and packed layouts are the AudioReach SPF
+ * PCM/TDM API.  The values below are the four-channel TDM sink tuple reached
+ * through Forte MTKT/MTLU/MTDE/MTDO and CSLU/CDLU/CDDE/CDDO into POOL; they
+ * are not translated from the unrelated legacy AFE_PARAM_ID_TDM_CONFIG ABI.
+ */
+static int audioreach_tdm_set_media_format(struct q6apm_graph *graph,
+					   struct audioreach_module *module,
+					   struct audioreach_module_config *cfg)
+{
+	struct apm_module_hw_intf_clk_cfg *clk_cfg;
+	struct apm_module_frame_size_factor_cfg *fs_cfg;
+	struct apm_tdm_module_intf_cfg *intf_cfg;
+	struct apm_tdm_module_lane_cfg *lane_cfg;
+	struct apm_module_hw_ep_mf_cfg *hw_cfg;
+	struct apm_module_param_data *param_data;
+	const int intf_sz = APM_TDM_INTF_CFG_PSIZE;
+	const int ep_sz = APM_HW_EP_CFG_PSIZE;
+	const int fs_sz = APM_FS_CFG_PSIZE;
+	const int lane_sz = APM_TDM_LANE_CFG_PSIZE;
+	const int clk_sz = APM_HW_INTF_CLK_CFG_PSIZE;
+	const int payload_size = intf_sz + ep_sz + fs_sz + lane_sz + clk_sz;
+	struct gpr_pkt *pkt;
+	void *p;
+	int rc;
+
+	/* Refuse every tuple except the exact muted speaker wire format. */
+	if (cfg->sample_rate != 48000 || cfg->bit_width != 24 ||
+	    cfg->num_channels != 4 || cfg->slot_mask != 0x0f ||
+	    cfg->nslots_per_frame != 4 || cfg->slot_width != 32)
+		return -EINVAL;
+
+	pkt = audioreach_alloc_apm_cmd_pkt(payload_size, APM_CMD_SET_CFG, 0);
+	if (IS_ERR(pkt))
+		return PTR_ERR(pkt);
+
+	p = (void *)pkt + GPR_HDR_SIZE + APM_CMD_HDR_SIZE;
+	intf_cfg = p;
+	param_data = &intf_cfg->param_data;
+	param_data->module_instance_id = module->instance_id;
+	param_data->param_id = PARAM_ID_TDM_INTF_CFG;
+	param_data->param_size = sizeof(intf_cfg->cfg);
+	intf_cfg->cfg.lpaif_type = 0;
+	intf_cfg->cfg.intf_idx = 2;
+	intf_cfg->cfg.sync_src = 1;
+	intf_cfg->cfg.ctrl_data_out_enable = 1;
+	intf_cfg->cfg.slot_mask = 0x0f;
+	intf_cfg->cfg.nslots_per_frame = 4;
+	intf_cfg->cfg.slot_width = 32;
+	intf_cfg->cfg.sync_mode = 0;
+	intf_cfg->cfg.ctrl_invert_sync_pulse = 0;
+	intf_cfg->cfg.ctrl_sync_data_delay = 1;
+
+	p += intf_sz;
+	hw_cfg = p;
+	param_data = &hw_cfg->param_data;
+	param_data->module_instance_id = module->instance_id;
+	param_data->param_id = PARAM_ID_HW_EP_MF_CFG;
+	param_data->param_size = sizeof(hw_cfg->mf);
+	hw_cfg->mf.sample_rate = 48000;
+	hw_cfg->mf.bit_width = 24;
+	hw_cfg->mf.num_channels = 4;
+	hw_cfg->mf.data_format = DATA_FORMAT_FIXED_POINT;
+
+	p += ep_sz;
+	fs_cfg = p;
+	param_data = &fs_cfg->param_data;
+	param_data->module_instance_id = module->instance_id;
+	param_data->param_id = PARAM_ID_HW_EP_FRAME_SIZE_FACTOR;
+	param_data->param_size = sizeof(fs_cfg->frame_size_factor);
+	fs_cfg->frame_size_factor = 1;
+
+	p += fs_sz;
+	lane_cfg = p;
+	param_data = &lane_cfg->param_data;
+	param_data->module_instance_id = module->instance_id;
+	param_data->param_id = PARAM_ID_TDM_LANE_CFG;
+	param_data->param_size = sizeof(lane_cfg->cfg);
+	lane_cfg->cfg.lane_mask = 2;
+
+	p += lane_sz;
+	clk_cfg = p;
+	param_data = &clk_cfg->param_data;
+	param_data->module_instance_id = module->instance_id;
+	param_data->param_id = PARAM_ID_HW_INTF_CLK_CFG;
+	param_data->param_size = sizeof(clk_cfg->cfg);
+	clk_cfg->cfg.clock_attri = 4;
+
+	rc = q6apm_send_cmd_sync(graph->apm, pkt, 0);
+	kfree(pkt);
+
+	return rc;
+}
+
 static int audioreach_audio_if_set_media_format(struct q6apm_graph *graph,
 						struct audioreach_module *module,
 						struct audioreach_module_config *cfg)
@@ -1185,8 +1305,9 @@ static int audioreach_pcm_set_media_format(struct q6apm_graph *graph,
 	media_cfg->endianness = PCM_LITTLE_ENDIAN;
 	media_cfg->interleaved = module->interleave_type;
 	media_cfg->num_channels = mcfg->num_channels;
-	media_cfg->q_factor = mcfg->bit_width - 1;
-	media_cfg->bits_per_sample = mcfg->bit_width;
+	/* SPF post-processing uses unpacked Q27 for 24-bit playback. */
+	media_cfg->q_factor = mcfg->bit_width == 24 ? 27 : mcfg->bit_width - 1;
+	media_cfg->bits_per_sample = mcfg->bit_width == 24 ? 32 : mcfg->bit_width;
 	memcpy(media_cfg->channel_mapping, mcfg->channel_map, mcfg->num_channels);
 
 	rc = q6apm_send_cmd_sync(graph->apm, pkt, 0);
@@ -1240,7 +1361,8 @@ static int audioreach_shmem_set_media_format(struct q6apm_graph *graph,
 		cfg->sample_rate = mcfg->sample_rate;
 		cfg->bit_width = mcfg->bit_width;
 		cfg->alignment = PCM_LSB_ALIGNED;
-		cfg->bits_per_sample = mcfg->bit_width;
+		/* ALSA S24_LE stores 24 valid bits in a 32-bit word. */
+		cfg->bits_per_sample = mcfg->bit_width == 24 ? 32 : mcfg->bit_width;
 		cfg->q_factor = mcfg->bit_width - 1;
 		cfg->endianness = PCM_LITTLE_ENDIAN;
 		cfg->num_channels = mcfg->num_channels;
@@ -1349,6 +1471,9 @@ int audioreach_set_media_format(struct q6apm_graph *graph, struct audioreach_mod
 	case MODULE_ID_AUDIO_IF_SOURCE:
 	case MODULE_ID_AUDIO_IF_SINK:
 		rc = audioreach_audio_if_set_media_format(graph, module, cfg);
+		break;
+	case MODULE_ID_TDM_SINK:
+		rc = audioreach_tdm_set_media_format(graph, module, cfg);
 		break;
 	case MODULE_ID_WR_SHARED_MEM_EP:
 		rc = audioreach_shmem_set_media_format(graph, module, cfg);

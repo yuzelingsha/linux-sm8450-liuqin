@@ -581,6 +581,7 @@ static const struct of_device_id qcom_pdm_domains[] __maybe_unused = {
 	{ .compatible = "qcom,sm8150", .data = sm8150_domains, },
 	{ .compatible = "qcom,sm8250", .data = sm8250_domains, },
 	{ .compatible = "qcom,sm8350", .data = sm8350_domains, },
+	{ .compatible = "qcom,cape", .data = sm8350_domains, },
 	{ .compatible = "qcom,sm8450", .data = sm8350_domains, },
 	{ .compatible = "qcom,sm8475", .data = sm8350_domains, },
 	{ .compatible = "qcom,sm8550", .data = sm8550_domains, },
@@ -631,7 +632,7 @@ static struct qcom_pdm_data *qcom_pdm_start(void)
 
 	INIT_LIST_HEAD(&data->services);
 
-	ret = qmi_handle_init(&data->handle, SERVREG_GET_DOMAIN_LIST_REQ_MAX_LEN,
+	ret = qmi_handle_init(&data->handle, SERVREG_LOC_PFR_REQ_MAX_LEN,
 			      NULL, qcom_pdm_msg_handlers);
 	if (ret) {
 		kfree(data);

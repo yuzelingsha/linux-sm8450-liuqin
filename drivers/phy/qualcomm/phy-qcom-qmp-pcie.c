@@ -3075,8 +3075,8 @@ static inline void qphy_setbits(void __iomem *base, u32 offset, u32 val)
 
 	reg = readl(base + offset);
 	reg |= val;
-	printk(KERN_DEBUG "Writing bits Offset: 0x%04x [0x%04x] Val: 0x%02x\n",
-		offset, (uint16_t)(base + offset), reg);
+	pr_debug("Writing bits Offset: 0x%04x [%p] Val: 0x%02x\n",
+		 offset, base + offset, reg);
 	writel(reg, base + offset);
 
 	/* ensure that above write is through */
@@ -3089,8 +3089,8 @@ static inline void qphy_clrbits(void __iomem *base, u32 offset, u32 val)
 
 	reg = readl(base + offset);
 	reg &= ~val;
-	printk(KERN_DEBUG "Writing bits Offset: 0x%04x [0x%04x] Val: 0x%02x\n",
-		offset, (uint16_t)(base + offset), reg);
+	pr_debug("Writing bits Offset: 0x%04x [%p] Val: 0x%02x\n",
+		 offset, base + offset, reg);
 	writel(reg, base + offset);
 
 	/* ensure that above write is through */

@@ -825,6 +825,9 @@ int32_t nvt_update_firmware(const char *firmware_name)
 {
 	int32_t ret = 0;
 
+	ts->firmware_update_count++;
+	NVT_LOG("firmware update #%u\n", ts->firmware_update_count);
+
 	// request bin file in "/etc/firmware"
 	ret = update_firmware_request(firmware_name);
 	if (ret) {
@@ -870,6 +873,21 @@ request_firmware_fail:
 	return ret;
 }
 
+int32_t nvt_update_firmware_no_eng_reset(const char *firmware_name)
+{
+	/*
+	 * The generic download fallback starts with nvt_eng_reset().  That is
+	 * forbidden after the panel has taken ownership of the shared TDDI, so a
+	 * follower must fail closed if hardware CRC is not available.
+	 */
+	if (!ts->hw_crc) {
+		NVT_ERR("refusing follower firmware fallback with engineering reset\n");
+		return -EOPNOTSUPP;
+	}
+
+	return nvt_update_firmware(firmware_name);
+}
+
 /*******************************************************
 Description:
 	Novatek touchscreen update firmware when booting
@@ -880,18 +898,26 @@ return:
 *******************************************************/
 void Boot_Update_Firmware(struct work_struct *work)
 {
+	int ret;
+
 //	nvt_match_fw();
 	mutex_lock(&ts->lock);
 	if (nvt_get_dbgfw_status()) {
-		if (nvt_update_firmware(DEFAULT_DEBUG_FW_NAME) < 0) {
+		ret = nvt_update_firmware(DEFAULT_DEBUG_FW_NAME);
+		if (ret < 0) {
 			NVT_ERR("use built-in fw");
-			nvt_update_firmware(ts->fw_name);
+			ret = nvt_update_firmware(ts->fw_name);
 		}
 	} else {
-		nvt_update_firmware(ts->fw_name);
+		ret = nvt_update_firmware(ts->fw_name);
 	}
+	if (ret < 0)
+		goto out;
+
 	disable_pen_input_device(false);
 	nvt_get_fw_info();
+
+out:
 	mutex_unlock(&ts->lock);
 }
 #endif /* BOOT_UPDATE_FIRMWARE */

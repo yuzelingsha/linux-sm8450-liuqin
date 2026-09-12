@@ -41,6 +41,8 @@ struct wm_adsp {
 	struct work_struct boot_work;
 	int (*control_add)(struct wm_adsp *dsp, struct cs_dsp_coeff_ctl *cs_ctl);
 	int (*pre_run)(struct wm_adsp *dsp);
+	int (*post_run)(struct wm_adsp *dsp);
+	void (*post_stop)(struct wm_adsp *dsp);
 
 	bool preloaded;
 	bool fatal_error;

@@ -15,6 +15,7 @@
 #include <linux/moduleparam.h>
 #include <linux/pm_runtime.h>
 #include <linux/property.h>
+#include <linux/unaligned.h>
 #include <sound/initval.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
@@ -325,7 +326,26 @@ static SOC_VALUE_ENUM_SINGLE_DECL(cs35l41_dsprx2_enum,
 static const struct snd_kcontrol_new dsp_rx2_mux =
 	SOC_DAPM_ENUM("DSPRX2 SRC", cs35l41_dsprx2_enum);
 
+static int cs35l41_calibrated_get(struct snd_kcontrol *kcontrol,
+				struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+	struct cs35l41_private *cs35l41 = snd_soc_component_get_drvdata(component);
+
+	ucontrol->value.integer.value[0] = READ_ONCE(cs35l41->liuqin_calibration_loaded);
+	return 0;
+}
+
 static const struct snd_kcontrol_new cs35l41_aud_controls[] = {
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "Speaker Calibration Loaded",
+		.access = SNDRV_CTL_ELEM_ACCESS_READ,
+		.info = snd_ctl_boolean_mono_info,
+		.get = cs35l41_calibrated_get,
+	},
+	SOC_SINGLE("ASPTX1 Diagnostic Switch", CS35L41_SP_ENABLES,
+		   CS35L41_ASP_TX1_EN_SHIFT, 1, 0),
 	SOC_SINGLE_SX_TLV("Digital PCM Volume", CS35L41_AMP_DIG_VOL_CTRL,
 			  3, 0x4CF, 0x391, dig_vol_tlv),
 	SOC_SINGLE_TLV("Analog PCM Volume", CS35L41_AMP_GAIN_CTRL, 5, 0x14, 0,
@@ -509,10 +529,37 @@ static int cs35l41_main_amp_event(struct snd_soc_dapm_widget *w,
 {
 	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
 	struct cs35l41_private *cs35l41 = snd_soc_component_get_drvdata(component);
+	bool post_pmu = component->card &&
+		!strcmp(component->card->name, "Xiaomi-Pad-6-Pro");
+	unsigned int source;
 	int ret = 0;
 
 	switch (event) {
 	case SND_SOC_DAPM_PRE_PMU:
+		if (post_pmu)
+			break;
+		goto enable_sync;
+	case SND_SOC_DAPM_POST_PMU:
+		if (!post_pmu)
+			break;
+		ret = regmap_read(cs35l41->regmap, CS35L41_DAC_PCM1_SRC, &source);
+		if (ret || !READ_ONCE(cs35l41->liuqin_calibration_loaded) ||
+		    (source & CS35L41_ASP_SOURCE_MASK) != CS35L41_INPUT_DSP_TX1) {
+			regmap_update_bits(cs35l41->regmap, CS35L41_AMP_DIG_VOL_CTRL,
+					   CS35L41_AMP_PCM_VOL_MASK,
+					   CS35L41_AMP_PCM_VOL_MUTE << CS35L41_AMP_PCM_VOL_SHIFT);
+			return ret ? ret : -EACCES;
+		}
+		regmap_multi_reg_write_bypassed(cs35l41->regmap,
+						cs35l41_pup_patch,
+						ARRAY_SIZE(cs35l41_pup_patch));
+		ret = regmap_update_bits(cs35l41->regmap, CS35L41_PWR_CTRL1,
+					 CS35L41_GLOBAL_EN_MASK,
+					 1 << CS35L41_GLOBAL_EN_SHIFT);
+		if (!ret)
+			usleep_range(1000, 1100);
+		break;
+enable_sync:
 		regmap_multi_reg_write_bypassed(cs35l41->regmap,
 						cs35l41_pup_patch,
 						ARRAY_SIZE(cs35l41_pup_patch));
@@ -576,7 +623,8 @@ static const struct snd_soc_dapm_widget cs35l41_dapm_widgets[] = {
 
 	SND_SOC_DAPM_OUT_DRV_E("Main AMP", CS35L41_PWR_CTRL2, 0, 0, NULL, 0,
 			       cs35l41_main_amp_event,
-			       SND_SOC_DAPM_POST_PMD |	SND_SOC_DAPM_PRE_PMU),
+			       SND_SOC_DAPM_POST_PMD | SND_SOC_DAPM_PRE_PMU |
+			       SND_SOC_DAPM_POST_PMU),
 
 	SND_SOC_DAPM_MUX("ASP TX1 Source", SND_SOC_NOPM, 0, 0, &asp_tx1_mux),
 	SND_SOC_DAPM_MUX("ASP TX2 Source", SND_SOC_NOPM, 0, 0, &asp_tx2_mux),
@@ -757,7 +805,7 @@ static int cs35l41_pcm_hw_params(struct snd_pcm_substream *substream,
 {
 	struct cs35l41_private *cs35l41 = snd_soc_component_get_drvdata(dai->component);
 	unsigned int rate = params_rate(params);
-	u8 asp_wl;
+	u8 asp_wl, asp_width;
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(cs35l41_fs_rates); i++) {
@@ -771,6 +819,9 @@ static int cs35l41_pcm_hw_params(struct snd_pcm_substream *substream,
 	}
 
 	asp_wl = params_width(params);
+	asp_width = asp_wl;
+	if (!strcmp(dai->component->card->name, "Xiaomi-Pad-6-Pro"))
+		asp_width = params_physical_width(params);
 
 	regmap_update_bits(cs35l41->regmap, CS35L41_GLOBAL_CLK_CTRL,
 			   CS35L41_GLOBAL_FS_MASK,
@@ -779,7 +830,7 @@ static int cs35l41_pcm_hw_params(struct snd_pcm_substream *substream,
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
 		regmap_update_bits(cs35l41->regmap, CS35L41_SP_FORMAT,
 				   CS35L41_ASP_WIDTH_RX_MASK,
-				   asp_wl << CS35L41_ASP_WIDTH_RX_SHIFT);
+				   asp_width << CS35L41_ASP_WIDTH_RX_SHIFT);
 		regmap_update_bits(cs35l41->regmap, CS35L41_SP_RX_WL,
 				   CS35L41_ASP_RX_WL_MASK,
 				   asp_wl << CS35L41_ASP_RX_WL_SHIFT);
@@ -1078,6 +1129,131 @@ static int cs35l41_handle_pdata(struct device *dev, struct cs35l41_hw_cfg *hw_cf
 	return 0;
 }
 
+static int cs35l41_liuqin_load_calibration(struct wm_adsp *dsp);
+
+static int cs35l41_liuqin_pre_run(struct wm_adsp *dsp)
+{
+	struct cs35l41_private *cs35l41 = container_of(dsp, struct cs35l41_private, dsp);
+	struct cs_dsp_coeff_ctl *ctl;
+	__be32 delay = cpu_to_be32(0x20);
+	int ret;
+
+	if (dsp->fw != 9 || strcmp(dsp->component->card->name, "Xiaomi-Pad-6-Pro"))
+		return 0;
+
+	WRITE_ONCE(cs35l41->liuqin_calibration_loaded, false);
+	/* Vendor Protection initialization, before coefficient sync/core start.
+	 * cs_dsp_run() already holds pwr_lock here.
+	 */
+	ctl = cs_dsp_get_ctl(&dsp->cs_dsp, "MAX_LRCLK_DELAY", WMFW_ADSP2_XM, 0x400a4);
+	ret = cs_dsp_coeff_write_ctrl(ctl, 0, &delay, sizeof(delay));
+
+	return ret < 0 ? ret : cs35l41_liuqin_load_calibration(dsp);
+}
+
+static void cs35l41_liuqin_post_stop(struct wm_adsp *dsp)
+{
+	struct cs35l41_private *cs35l41 = container_of(dsp, struct cs35l41_private, dsp);
+
+	WRITE_ONCE(cs35l41->liuqin_calibration_loaded, false);
+}
+
+static int cs35l41_liuqin_load_calibration(struct wm_adsp *dsp)
+{
+	static const char * const names[] = { "CAL_R", "CAL_CHECKSUM", "CAL_STATUS" };
+	struct cs35l41_private *cs35l41 = container_of(dsp, struct cs35l41_private, dsp);
+	const char *prefix = dsp->component->name_prefix;
+	struct cs_dsp_coeff_ctl *ctl[ARRAY_SIZE(names)];
+	const struct firmware *fw;
+	__be32 want[ARRAY_SIZE(names)];
+	char filename[64];
+	u32 calr;
+	int i, ret;
+
+	if (strcmp(dsp->component->card->name, "Xiaomi-Pad-6-Pro"))
+		return 0;
+	WRITE_ONCE(cs35l41->liuqin_calibration_loaded, false);
+	if (dsp->fw != 9 || !prefix ||
+	    (strcmp(prefix, "TL") && strcmp(prefix, "TR") &&
+	     strcmp(prefix, "BL") && strcmp(prefix, "BR"))) {
+		ret = -EINVAL;
+		goto mute;
+	}
+	/* Per-device factory data, provisioned separately from distributable tuning. */
+	snprintf(filename, sizeof(filename), "cirrus/cs35l41-liuqin-%s-calr.bin", prefix);
+	ret = request_firmware_direct(&fw, filename, cs35l41->dev);
+	if (ret)
+		goto mute;
+	if (fw->size != sizeof(u32)) {
+		ret = -EINVAL;
+		release_firmware(fw);
+		goto mute;
+	}
+	calr = get_unaligned_le32(fw->data);
+	release_firmware(fw);
+	if (!calr || calr > INT_MAX) {
+		ret = -ERANGE;
+		goto mute;
+	}
+	want[0] = cpu_to_be32(calr);
+	want[1] = cpu_to_be32(calr + 1);
+	want[2] = cpu_to_be32(1);
+	/* Vendor applies these before core start. Writing after start races the
+	 * firmware's selection of factory versus default speaker calibration.
+	 * STATUS is committed last; post_run verifies the completed memory sync.
+	 */
+	for (i = 0; i < ARRAY_SIZE(names); i++) {
+		ctl[i] = cs_dsp_get_ctl(&dsp->cs_dsp, names[i], WMFW_ADSP2_XM, 0xcd);
+		/* These three legacy controls have flags=0 in v0.60 WMFW.
+		 * Cache here; cs_dsp_run synchronizes them before start_core.
+		 */
+		ret = cs_dsp_coeff_write_ctrl(ctl[i], 0, &want[i], sizeof(want[i]));
+		if (ret < 0)
+			goto mute;
+	}
+	cs35l41->liuqin_calr = calr;
+	return 0;
+
+mute:
+	regmap_update_bits(cs35l41->regmap, CS35L41_AMP_DIG_VOL_CTRL,
+			   CS35L41_AMP_PCM_VOL_MASK,
+			   CS35L41_AMP_PCM_VOL_MUTE << CS35L41_AMP_PCM_VOL_SHIFT);
+	dev_err(cs35l41->dev, "Speaker calibration not ready: %d\n", ret);
+	return ret;
+}
+
+static int cs35l41_liuqin_post_run(struct wm_adsp *dsp)
+{
+	static const char * const names[] = { "CAL_R", "CAL_CHECKSUM", "CAL_STATUS" };
+	struct cs35l41_private *cs35l41 = container_of(dsp, struct cs35l41_private, dsp);
+	struct cs_dsp_coeff_ctl *ctl;
+	__be32 want[] = { cpu_to_be32(cs35l41->liuqin_calr),
+			cpu_to_be32(cs35l41->liuqin_calr + 1), cpu_to_be32(1) };
+	__be32 got;
+	int i, ret;
+
+	if (strcmp(dsp->component->card->name, "Xiaomi-Pad-6-Pro"))
+		return 0;
+	/* These flags=0 controls read hardware once running. Verify the pre-core
+	 * sync, not firmware adoption: that follows the complete playback start.
+	 * Blocking on CAL_R_SELECTED here prevents that later lifecycle stage.
+	 */
+	for (i = 0; i < ARRAY_SIZE(names); i++) {
+		ctl = cs_dsp_get_ctl(&dsp->cs_dsp, names[i], WMFW_ADSP2_XM, 0xcd);
+		ret = cs_dsp_coeff_read_ctrl(ctl, 0, &got, sizeof(got));
+		if (ret || got != want[i]) {
+			regmap_update_bits(cs35l41->regmap, CS35L41_AMP_DIG_VOL_CTRL,
+					   CS35L41_AMP_PCM_VOL_MASK,
+					   CS35L41_AMP_PCM_VOL_MUTE << CS35L41_AMP_PCM_VOL_SHIFT);
+			dev_err(cs35l41->dev, "Speaker calibration load not verified: %d\n",
+				ret ? ret : -EIO);
+			return ret ? ret : -EIO;
+		}
+	}
+	WRITE_ONCE(cs35l41->liuqin_calibration_loaded, true);
+	return 0;
+}
+
 static int cs35l41_dsp_init(struct cs35l41_private *cs35l41)
 {
 	struct wm_adsp *dsp;
@@ -1087,6 +1263,9 @@ static int cs35l41_dsp_init(struct cs35l41_private *cs35l41)
 	dsp = &cs35l41->dsp;
 	dsp->part = "cs35l41";
 	dsp->fw = 9; /* 9 is WM_ADSP_FW_SPK_PROT in wm_adsp.c */
+	dsp->pre_run = cs35l41_liuqin_pre_run;
+	dsp->post_run = cs35l41_liuqin_post_run;
+	dsp->post_stop = cs35l41_liuqin_post_stop;
 	dsp->toggle_preload = true;
 
 	cs35l41_configure_cs_dsp(cs35l41->dev, cs35l41->regmap, &dsp->cs_dsp);

@@ -8,6 +8,7 @@
 #include <sound/soc-dapm.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
+#include <sound/cs35l41.h>
 #include <linux/soundwire/sdw.h>
 #include <sound/jack.h>
 #include <linux/input-event-codes.h>
@@ -38,6 +39,7 @@ static int sc8280xp_tdm_hw_params(struct snd_pcm_substream *substream,
 	struct qcom_snd_tdm_slot_cfg cpu_cfg;
 	struct qcom_snd_tdm_slot_cfg codec_cfg;
 	int bclk_freq;
+	unsigned int codec_fmt = SND_SOC_DAIFMT_I2S;
 	int ret;
 	int i;
 
@@ -52,13 +54,17 @@ static int sc8280xp_tdm_hw_params(struct snd_pcm_substream *substream,
 	if (ret && ret != -ENOTSUPP)
 		return ret;
 
-	/* Match the upstream sm8450 machine data for codec-side serial format. */
+	/* The liuqin speaker bus uses the vendor DSP_A frame format. */
+	if (!strcmp(rtd->card->name, "Xiaomi-Pad-6-Pro") &&
+	    cpu_dai->id == TERTIARY_TDM_RX_0)
+		codec_fmt = SND_SOC_DAIFMT_DSP_A;
+
 	if (of_device_is_compatible(rtd->card->dev->of_node, "qcom,sm8450-sndcard")) {
 		for_each_rtd_codec_dais(rtd, i, codec_dai) {
 			ret = snd_soc_dai_set_fmt(codec_dai,
 						  SND_SOC_DAIFMT_BC_FC |
 						  SND_SOC_DAIFMT_NB_NF |
-						  SND_SOC_DAIFMT_I2S);
+						  codec_fmt);
 			if (ret && ret != -ENOTSUPP)
 				return ret;
 		}
@@ -73,16 +79,23 @@ static int sc8280xp_tdm_hw_params(struct snd_pcm_substream *substream,
 	if (bclk_freq <= 0)
 		return -EINVAL;
 
-	/*
-	 * Newer q6apm owns a child BCLK. The 6.17 implementation has no
-	 * set_sysclk callback, so -ENOTSUPP is the expected compatibility path.
-	 */
-	ret = snd_soc_dai_set_sysclk(cpu_dai, LPAIF_MI2S_BCLK, bclk_freq,
-				     SND_SOC_CLOCK_IN);
-	if (ret && ret != -ENOTSUPP) {
-		dev_err(rtd->dev, "%s: failed to set cpu sysclk: %d\n", __func__, ret);
-		return ret;
+	if (!strcmp(rtd->card->name, "Xiaomi-Pad-6-Pro") &&
+	    cpu_dai->id == TERTIARY_TDM_RX_0) {
+		for_each_rtd_codec_dais(rtd, i, codec_dai) {
+			ret = snd_soc_component_set_sysclk(codec_dai->component,
+							   CS35L41_CLKID_SCLK, 0,
+							   bclk_freq,
+							   SND_SOC_CLOCK_IN);
+			if (ret)
+				return ret;
+		}
 	}
+
+	/*
+	 * Newer q6apm owns a child BCLK and receives LPAIF_MI2S_BCLK here.
+	 * product/6.17 has neither that clock ID nor the child-clock lifecycle;
+	 * the Audio IF topology remains the sole clock owner on this base.
+	 */
 
 	return 0;
 }
@@ -154,18 +167,31 @@ static int sc8280xp_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
 	rate->min = rate->max = 48000;
 	channels->min = 2;
 	channels->max = 2;
-	switch (cpu_dai->id) {
-	case PRIMARY_TDM_RX_0 ... QUINARY_TDM_TX_7:
-		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
-		break;
-	case TX_CODEC_DMA_TX_0:
-	case TX_CODEC_DMA_TX_1:
-	case TX_CODEC_DMA_TX_2:
-	case TX_CODEC_DMA_TX_3:
-		channels->min = 1;
-		break;
-	default:
-		break;
+	if (of_device_is_compatible(rtd->card->dev->of_node,
+				    "qcom,sm8450-sndcard") &&
+	    cpu_dai->id == TERTIARY_TDM_RX_0) {
+		/*
+		 * liuqin's four CS35L41 speakers use the vendor's 48 kHz,
+		 * 4-channel S24_LE tertiary-TDM group.  Keep the generic
+		 * SC8280XP restrictions for every other TDM backend.
+		 */
+		channels->min = 4;
+		channels->max = 4;
+		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S24_LE);
+	} else {
+		switch (cpu_dai->id) {
+		case PRIMARY_TDM_RX_0 ... QUINARY_TDM_TX_7:
+			snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
+			break;
+		case TX_CODEC_DMA_TX_0:
+		case TX_CODEC_DMA_TX_1:
+		case TX_CODEC_DMA_TX_2:
+		case TX_CODEC_DMA_TX_3:
+			channels->min = 1;
+			break;
+		default:
+			break;
+		}
 	}
 
 

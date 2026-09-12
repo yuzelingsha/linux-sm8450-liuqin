@@ -27,7 +27,6 @@
 #include <linux/of_gpio.h>
 #include <linux/of_irq.h>
 
-
 #include "nt36xxx.h"
 
 #if NVT_TOUCH_ESD_PROTECT
@@ -52,6 +51,8 @@ extern void Boot_Update_Firmware(struct work_struct *work);
 
 static int32_t nvt_ts_suspend(struct device *dev);
 static int32_t nvt_ts_resume(struct device *dev);
+static void nvt_set_touch_awake_state(struct nvt_ts_data *ts_core,
+				      bool awake);
 
 uint32_t ENG_RST_ADDR  = 0x7FFF80;
 uint32_t SWRST_N8_ADDR = 0; //read from dtsi
@@ -65,8 +66,6 @@ const uint16_t touch_key_array[TOUCH_KEY_NUM] = {
 };
 #endif
 
-static uint8_t bTouchIsAwake = 0;
-
 /*******************************************************
 Description:
 	Novatek touchscreen irq enable/disable function.
@@ -74,7 +73,7 @@ Description:
 return:
 	n.a.
 *******************************************************/
-static void nvt_irq_enable(bool enable)
+void nvt_irq_enable(bool enable)
 {
 	if (enable) {
 		if (!ts->irq_enabled) {
@@ -243,20 +242,20 @@ return:
 *******************************************************/
 void nvt_fw_crc_enable(void)
 {
-	uint8_t buf[4] = {0};
+	u8 clear_cmd[7] = {0};
+	u8 crc_cmd[3] = {0};
 
 	//---set xdata index to EVENT BUF ADDR---
 	nvt_set_page(ts->mmap->EVENT_BUF_ADDR);
 
-	//---clear fw reset status---
-	buf[0] = EVENT_MAP_RESET_COMPLETE & (0x7F);
-	buf[1] = 0x00;
-	CTP_SPI_WRITE(ts->client, buf, 2);
+	/* Clear the complete vendor reset-status window, not only byte zero. */
+	clear_cmd[0] = EVENT_MAP_RESET_COMPLETE & 0x7F;
+	CTP_SPI_WRITE(ts->client, clear_cmd, sizeof(clear_cmd));
 
 	//---enable fw crc---
-	buf[0] = EVENT_MAP_HOST_CMD & (0x7F);
-	buf[1] = 0xAE;	//enable fw crc command
-	CTP_SPI_WRITE(ts->client, buf, 2);
+	crc_cmd[0] = EVENT_MAP_HOST_CMD & 0x7F;
+	crc_cmd[1] = 0xAE;	//enable fw crc command
+	CTP_SPI_WRITE(ts->client, crc_cmd, sizeof(crc_cmd));
 }
 
 /*******************************************************
@@ -347,6 +346,10 @@ return:
 *******************************************************/
 void nvt_eng_reset(void)
 {
+	if (ts)
+		ts->eng_reset_count++;
+	NVT_LOG("engineering reset #%u\n", ts ? ts->eng_reset_count : 0);
+
 	//---eng reset cmds to ENG_RST_ADDR---
 	nvt_write_addr(ENG_RST_ADDR, 0x5A);
 
@@ -559,6 +562,45 @@ int32_t nvt_read_pid(void)
 
 /*******************************************************
 Description:
+	Novatek touchscreen declare the coordinate axes of the
+	touch and pen input devices, in panel pixels.
+
+	Both devices are registered from probe(), which runs
+	before the firmware has been downloaded and therefore
+	only has the header defaults to declare them from.
+	nvt_get_fw_info() then overwrites abs_x_max/abs_y_max
+	with what the firmware reports, so it calls these again:
+	the declared range and the coordinates reported against
+	it must never come from two different sources.
+
+return:
+	n.a.
+*******************************************************/
+static void nvt_ts_set_touch_abs_params(void)
+{
+	if (!ts->input_dev)
+		return;
+
+	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0, ts->abs_x_max - 1, 0, 0);
+	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, 0, ts->abs_y_max - 1, 0, 0);
+}
+
+static void nvt_ts_set_pen_abs_params(void)
+{
+	int32_t x_max = ts->abs_x_max - 1;
+	int32_t y_max = ts->abs_y_max - 1;
+
+	if (!ts->pen_input_dev)
+		return;
+
+	input_set_abs_params(ts->pen_input_dev, ABS_X, 0, x_max, 0, 0);
+	input_set_abs_params(ts->pen_input_dev, ABS_Y, 0, y_max, 0, 0);
+	input_abs_set_res(ts->pen_input_dev, ABS_X, x_max / PANEL_DEFAULT_WIDTH_MM);
+	input_abs_set_res(ts->pen_input_dev, ABS_Y, y_max / PANEL_DEFAULT_HEIGHT_MM);
+}
+
+/*******************************************************
+Description:
 	Novatek touchscreen get firmware related information
 	function.
 
@@ -583,6 +625,16 @@ info_retry:
 	ts->y_num = buf[4];
 	ts->abs_x_max = (uint16_t)((buf[5] << 8) | buf[6]);
 	ts->abs_y_max = (uint16_t)((buf[7] << 8) | buf[8]);
+	/*
+	 * The firmware reports the touch extent in its own tenth-of-a-pixel
+	 * units (measured on hardware: 18000 x 28800 for the 1800 x 2880
+	 * panel). Every other user of these fields -- the axis declarations,
+	 * the pen clamp, the per-millimetre resolution -- expects panel
+	 * pixels, and the broken-info fallback below assigns panel-pixel
+	 * defaults, so convert here and nowhere else.
+	 */
+	ts->abs_x_max /= NVT_COORD_SCALE;
+	ts->abs_y_max /= NVT_COORD_SCALE;
 	ts->max_button_num = buf[11];
 	ts->cascade = buf[34] & 0x01;
 	if (ts->pen_support) {
@@ -615,7 +667,13 @@ info_retry:
 		ret = 0;
 	}
 
-	NVT_LOG("fw_ver = 0x%02X, fw_type = 0x%02X, x_num=%d, y_num=%d\n", ts->fw_ver, buf[14], ts->x_num, ts->y_num);
+	NVT_LOG("fw_ver = 0x%02X, fw_type = 0x%02X, x_num=%d, y_num=%d, abs_x_max=%d, abs_y_max=%d\n",
+			ts->fw_ver, buf[14], ts->x_num, ts->y_num,
+			ts->abs_x_max, ts->abs_y_max);
+
+	//---re-declare the axes, which probe() could only guess---
+	nvt_ts_set_touch_abs_params();
+	nvt_ts_set_pen_abs_params();
 
 	//---Get Novatek PID---
 	nvt_read_pid();
@@ -665,6 +723,23 @@ static int32_t nvt_parse_dt(struct device *dev)
 	ts->wgp_stylus = of_property_read_bool(np, "novatek,wgp-stylus");
 	NVT_LOG("novatek,wgp-stylus=%d\n", ts->wgp_stylus);
 
+	/*
+	 * The pen half of the report is sampled on a finer grid than the panel,
+	 * and the vendor trees name two different factors for it in the two
+	 * boards that carry this controller: yudi sets novatek,wgp-stylus,
+	 * which this driver has always treated as ten firmware units per pixel,
+	 * and liuqin sets novatek,stylus-resol-double, which is two. Neither
+	 * changes the finger scale. With no property the pen reports panel
+	 * pixels like the touch half does.
+	 */
+	if (ts->wgp_stylus)
+		ts->pen_coord_scale = 10;
+	else if (of_property_read_bool(np, "novatek,stylus-resol-double"))
+		ts->pen_coord_scale = 2;
+	else
+		ts->pen_coord_scale = 1;
+	NVT_LOG("pen_coord_scale=%d\n", ts->pen_coord_scale);
+
 	ret = of_property_read_u32(np, "novatek,swrst-n8-addr", &SWRST_N8_ADDR);
 	if (ret) {
 		NVT_ERR("error reading novatek,swrst-n8-addr. ret=%d\n", ret);
@@ -705,6 +780,7 @@ static int32_t nvt_parse_dt(struct device *dev)
 	ts->reset_gpio = NVTTOUCH_RST_PIN;
 #endif
 	ts->irq_gpio = NVTTOUCH_INT_PIN;
+	ts->pen_coord_scale = 1;
 	return 0;
 }
 #endif
@@ -811,6 +887,18 @@ static void nvt_esd_check_func(struct work_struct *work)
 	//NVT_LOG("esd_check = %d (retry %d)\n", esd_check, esd_retry);	//DEBUG
 
 	if ((timer > NVT_TOUCH_ESD_CHECK_PERIOD) && esd_check) {
+		/*
+		 * A follower may only recover after the panel has re-established
+		 * ownership of the shared TDDI.  Stop input and wait for the next
+		 * unprepare/prepare cycle instead of downloading behind the panel.
+		 */
+		if (ts->is_panel_follower) {
+			nvt_irq_enable(false);
+			nvt_set_touch_awake_state(ts, false);
+			nvt_esd_check_enable(false);
+			NVT_ERR("ESD signature: follower stopped until panel cycle\n");
+			return;
+		}
 		mutex_lock(&ts->lock);
 		NVT_ERR("do ESD recovery, timer = %d, retry = %d\n", timer, esd_retry);
 		/* do esd recovery, reload fw */
@@ -936,14 +1024,23 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 			input_y = (uint32_t)(point_data[position + 3] << 8) + (uint32_t) (point_data[position + 4]);
 			if ((input_x < 0) || (input_y < 0))
 				continue;
-			if ((input_x > ts->abs_x_max * 10 - 1) || (input_y > ts->abs_y_max * 10 - 1))
+			if ((input_x > ts->abs_x_max * NVT_COORD_SCALE - 1) ||
+					(input_y > ts->abs_y_max * NVT_COORD_SCALE - 1))
 				continue;
+			input_x /= NVT_COORD_SCALE;
+			input_y /= NVT_COORD_SCALE;
 			input_w = (uint32_t)(point_data[position + 5]);
 			if (input_w == 0)
 				input_w = 1;
-			input_p = (uint32_t)(point_data[1 + 98 + i]);
-			if (input_p == 0)
-				input_p = 1;
+			/*
+			 * The short report this driver asks for carries no
+			 * per-contact pressure: [1..65] is the touch report
+			 * and [66..79] the pen report, which is where the pen
+			 * parser below reads from. Report the minimum
+			 * in-contact value, which is what this code already
+			 * substituted whenever the byte came back zero.
+			 */
+			input_p = 1;
 
 #if MT_PROTOCOL_B
 			press_id[input_id - 1] = 1;
@@ -954,8 +1051,8 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 			input_report_key(ts->input_dev, BTN_TOUCH, 1);
 #endif /* MT_PROTOCOL_B */
 
-			input_report_abs(ts->input_dev, ABS_MT_POSITION_X, input_y);
-			input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, TOUCH_DEFAULT_MAX_HEIGHT * 10 - input_x);
+			input_report_abs(ts->input_dev, ABS_MT_POSITION_X, input_x);
+			input_report_abs(ts->input_dev, ABS_MT_POSITION_Y, input_y);
 			input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, input_w);
 			input_report_abs(ts->input_dev, ABS_MT_PRESSURE, input_p);
 
@@ -1018,11 +1115,13 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 				// report pen data
 				pen_x = (uint32_t)(point_data[67] << 8) + (uint32_t)(point_data[68]);
 				pen_y = (uint32_t)(point_data[69] << 8) + (uint32_t)(point_data[70]);
-				if (pen_x >= ts->abs_x_max * 2 - 1) {
-					pen_x -= 1;
+				pen_x /= ts->pen_coord_scale;
+				pen_y /= ts->pen_coord_scale;
+				if (pen_x > ts->abs_x_max - 1) {
+					pen_x = ts->abs_x_max - 1;
 				}
-				if (pen_y >= ts->abs_y_max * 2 - 1) {
-					pen_y -= 1;
+				if (pen_y > ts->abs_y_max - 1) {
+					pen_y = ts->abs_y_max - 1;
 				}
 				pen_pressure = (uint32_t)(point_data[71] << 8) + (uint32_t)(point_data[72]);
 				pen_tilt_x = (int32_t)point_data[73];
@@ -1050,7 +1149,8 @@ static irqreturn_t nvt_ts_work_func(int irq, void *data)
 			} else if (pen_format_id == 0xF0) {
 				// report Pen ID
 			} else {
-				NVT_ERR("Unknown pen format id!\n");
+				NVT_ERR_ONCE("Unknown pen format id 0x%02X!\n",
+					     pen_format_id);
 				goto XFER_ERROR;
 			}
 		} else { // pen_format_id = 0xFF, i.e. no pen present
@@ -1128,14 +1228,12 @@ int32_t nvt_wait_auto_copy(void)
 }
 
 
-int32_t disable_pen_input_device(bool disable) {
+static int32_t __nvt_set_pen_state(bool disable)
+{
 	uint8_t buf[8] = {0};
 	int32_t ret = 0;
+
 	NVT_LOG("++\n");
-	if (!bTouchIsAwake || !ts) {
-		NVT_LOG("touch suspend, stop set pen state %s", disable ? "DISABLE" : "ENABLE");
-		goto nvt_set_pen_enable_out;
-	}
 	msleep(35);
 	disable = (!(ts->pen_input_dev_enable) || ts->pen_is_charge) ? true : disable;
 	//---set xdata index to EVENT BUF ADDR---
@@ -1160,16 +1258,226 @@ nvt_set_pen_enable_out:
 	return ret;
 }
 
-static void nvt_suspend_work(struct work_struct *work)
+int32_t disable_pen_input_device(bool disable)
 {
-	struct nvt_ts_data *ts_core = container_of(work, struct nvt_ts_data, suspend_work);
-	nvt_ts_suspend(&ts_core->client->dev);
+	if (!ts || !READ_ONCE(ts->touch_awake)) {
+		NVT_LOG("touch suspend, stop set pen state %s\n",
+			disable ? "DISABLE" : "ENABLE");
+		return 0;
+	}
+
+	return __nvt_set_pen_state(disable);
 }
 
 static void nvt_resume_work(struct work_struct *work)
 {
 	struct nvt_ts_data *ts_core = container_of(work, struct nvt_ts_data, resume_work);
 	nvt_ts_resume(&ts_core->client->dev);
+}
+
+static bool nvt_diagnostic_access_allowed(struct nvt_ts_data *ts_core)
+{
+	if (!ts_core->is_panel_follower)
+		return true;
+
+	return READ_ONCE(ts_core->panel_on) &&
+	       READ_ONCE(ts_core->touch_awake);
+}
+
+static ssize_t point_data_show(struct device *dev,
+			       struct device_attribute *attr, char *buf)
+{
+	struct nvt_ts_data *ts_core = dev_get_drvdata(dev);
+	u8 point_data[POINT_DATA_LEN + PEN_DATA_LEN + 1] = { 0 };
+	const size_t len = sizeof(point_data);
+	ssize_t count;
+	int i, ret;
+
+	if (!ts_core)
+		return -ENODEV;
+	if (!nvt_diagnostic_access_allowed(ts_core))
+		return -EHOSTDOWN;
+
+	mutex_lock(&ts_core->lock);
+	if (!nvt_diagnostic_access_allowed(ts_core)) {
+		mutex_unlock(&ts_core->lock);
+		return -EHOSTDOWN;
+	}
+	ret = CTP_SPI_READ(ts_core->client, point_data, len);
+	mutex_unlock(&ts_core->lock);
+
+	count = sysfs_emit(buf, "ret=%d len=%zu data=", ret, len);
+	for (i = 0; i < len; i++)
+		count += sysfs_emit_at(buf, count, "%02x", point_data[i]);
+	count += sysfs_emit_at(buf, count, "\n");
+
+	return count;
+}
+static DEVICE_ATTR_RO(point_data);
+
+static int nvt_read_event_bytes(struct nvt_ts_data *ts_core, u8 offset,
+				u8 *data, size_t len)
+{
+	int ret;
+
+	memset(data, 0, len);
+	ret = nvt_set_page(ts_core->mmap->EVENT_BUF_ADDR | offset);
+	if (ret)
+		return ret;
+
+	data[0] = offset;
+	return CTP_SPI_READ(ts_core->client, data, len);
+}
+
+static ssize_t touch_state_show(struct device *dev,
+				struct device_attribute *attr, char *buf)
+{
+	struct nvt_ts_data *ts_core = dev_get_drvdata(dev);
+	u8 host_cmd[2] = { 0 };
+	u8 handshake[2] = { 0 };
+	u8 reset_state[6] = { 0 };
+	u8 fw_info[39] = { 0 };
+	u8 cached_cascade;
+	ssize_t count;
+	int host_ret, handshake_ret, reset_ret, fw_ret, restore_ret;
+	int i;
+
+	if (!ts_core)
+		return -ENODEV;
+	if (!nvt_diagnostic_access_allowed(ts_core))
+		return -EHOSTDOWN;
+
+	mutex_lock(&ts_core->lock);
+	if (!nvt_diagnostic_access_allowed(ts_core)) {
+		mutex_unlock(&ts_core->lock);
+		return -EHOSTDOWN;
+	}
+	host_ret = nvt_read_event_bytes(ts_core, EVENT_MAP_HOST_CMD,
+					host_cmd, sizeof(host_cmd));
+	handshake_ret = nvt_read_event_bytes(ts_core,
+					     EVENT_MAP_HANDSHAKING_or_SUB_CMD_BYTE,
+					     handshake, sizeof(handshake));
+	reset_ret = nvt_read_event_bytes(ts_core, EVENT_MAP_RESET_COMPLETE,
+					 reset_state, sizeof(reset_state));
+	fw_ret = nvt_read_event_bytes(ts_core, EVENT_MAP_FWINFO,
+				      fw_info, sizeof(fw_info));
+	restore_ret = nvt_set_page(ts_core->mmap->EVENT_BUF_ADDR);
+	cached_cascade = ts_core->cascade;
+	mutex_unlock(&ts_core->lock);
+
+	count = sysfs_emit(buf,
+			   "host_ret=%d host=%02x handshake_ret=%d handshake=%02x ",
+			   host_ret, host_cmd[1], handshake_ret, handshake[1]);
+	count += sysfs_emit_at(buf, count, "reset_ret=%d reset=", reset_ret);
+	for (i = 1; i < sizeof(reset_state); i++)
+		count += sysfs_emit_at(buf, count, "%02x", reset_state[i]);
+	count += sysfs_emit_at(buf, count, " fw_ret=%d fwinfo=", fw_ret);
+	for (i = 1; i < sizeof(fw_info); i++)
+		count += sysfs_emit_at(buf, count, "%02x", fw_info[i]);
+	count += sysfs_emit_at(buf, count,
+			       " cached_cascade=%u fwinfo_cascade=%u restore_ret=%d",
+			       cached_cascade, fw_info[34] & 0x01, restore_ret);
+	count += sysfs_emit_at(buf, count,
+			       " eng_reset_count=%u resume_count=%u firmware_update_count=%u\n",
+			       ts_core->eng_reset_count, ts_core->resume_count,
+			       ts_core->firmware_update_count);
+
+	return count;
+}
+static DEVICE_ATTR_RO(touch_state);
+
+static bool nvt_panel_resume_allowed(struct nvt_ts_data *ts_core)
+{
+	unsigned long flags;
+	bool allowed;
+
+	spin_lock_irqsave(&ts_core->lifecycle_lock, flags);
+	allowed = ts_core->is_panel_follower && ts_core->resources_ready &&
+		  ts_core->panel_on && !ts_core->stopping &&
+		  !ts_core->touch_awake;
+	spin_unlock_irqrestore(&ts_core->lifecycle_lock, flags);
+
+	return allowed;
+}
+
+static bool nvt_panel_is_on(struct nvt_ts_data *ts_core)
+{
+	unsigned long flags;
+	bool panel_on;
+
+	spin_lock_irqsave(&ts_core->lifecycle_lock, flags);
+	panel_on = ts_core->panel_on && !ts_core->stopping;
+	spin_unlock_irqrestore(&ts_core->lifecycle_lock, flags);
+
+	return panel_on;
+}
+
+static void nvt_set_touch_awake_state(struct nvt_ts_data *ts_core, bool awake)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&ts_core->lifecycle_lock, flags);
+	ts_core->touch_awake = awake;
+	spin_unlock_irqrestore(&ts_core->lifecycle_lock, flags);
+}
+
+static bool nvt_commit_follower_awake(struct nvt_ts_data *ts_core)
+{
+	unsigned long flags;
+	bool committed = false;
+
+	spin_lock_irqsave(&ts_core->lifecycle_lock, flags);
+	if (ts_core->resources_ready && ts_core->panel_on &&
+	    !ts_core->stopping) {
+		ts_core->touch_awake = true;
+		committed = true;
+	}
+	spin_unlock_irqrestore(&ts_core->lifecycle_lock, flags);
+
+	return committed;
+}
+
+static void nvt_unregister_panel_follower(struct nvt_ts_data *ts_core)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&ts_core->lifecycle_lock, flags);
+	ts_core->stopping = true;
+	ts_core->resources_ready = false;
+	spin_unlock_irqrestore(&ts_core->lifecycle_lock, flags);
+
+	if (!ts_core->panel_follower_registered)
+		return;
+
+	drm_panel_remove_follower(&ts_core->panel_follower);
+	ts_core->panel_follower_registered = false;
+}
+
+static void nvt_destroy_workqueues(struct nvt_ts_data *ts_core)
+{
+	/* Suspend/resume work can touch both firmware and ESD workqueues. */
+	if (ts_core->event_wq) {
+		cancel_work_sync(&ts_core->resume_work);
+		destroy_workqueue(ts_core->event_wq);
+		ts_core->event_wq = NULL;
+	}
+
+#if BOOT_UPDATE_FIRMWARE
+	if (nvt_fwu_wq) {
+		cancel_delayed_work_sync(&ts_core->nvt_fwu_work);
+		destroy_workqueue(nvt_fwu_wq);
+		nvt_fwu_wq = NULL;
+	}
+#endif
+
+#if NVT_TOUCH_ESD_PROTECT
+	if (nvt_esd_check_wq) {
+		cancel_delayed_work_sync(&nvt_esd_check_work);
+		nvt_esd_check_enable(false);
+		destroy_workqueue(nvt_esd_check_wq);
+		nvt_esd_check_wq = NULL;
+	}
+#endif
 }
 
 /*******************************************************
@@ -1226,18 +1534,6 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 		goto err_spi_setup;
 	}
 
-#ifdef CONFIG_MTK_SPI
-    /* old usage of MTK spi API */
-    memcpy(&ts->spi_ctrl, &spi_ctrdata, sizeof(struct mt_chip_conf));
-    ts->client->controller_data = (void *)&ts->spi_ctrl;
-#endif
-
-#ifdef CONFIG_SPI_MT65XX
-    /* new usage of MTK spi API */
-    memcpy(&ts->spi_ctrl, &spi_ctrdata, sizeof(struct mtk_chip_config));
-    ts->client->controller_data = (void *)&ts->spi_ctrl;
-#endif
-
 	NVT_LOG("mode=%d, max_speed_hz=%d\n", ts->client->mode, ts->client->max_speed_hz);
 
 	//---parse dts---
@@ -1256,36 +1552,26 @@ static int32_t nvt_ts_probe(struct spi_device *client)
 
 	mutex_init(&ts->lock);
 	mutex_init(&ts->xbuf_lock);
+	spin_lock_init(&ts->lifecycle_lock);
+	ts->is_panel_follower = drm_is_panel_follower(&client->dev);
+	WRITE_ONCE(ts->touch_awake, false);
 
-	/* If the device follows a DRM panel, configure panel follower */
-	if (drm_is_panel_follower(&client->dev)) {
-		ts->panel_follower.funcs = &nt36xxx_panel_follower_funcs;
-		devm_drm_panel_add_follower(&client->dev, &ts->panel_follower);
-	}
-
-NVT_LOG("Hi1\n");
-//nvt_check_fw_reset_state(0x0A);
-	//---eng reset before TP_RESX high
-	nvt_eng_reset();
-NVT_LOG("Hi2\n");
-//nvt_check_fw_reset_state(0x0A);
+	/*
+	 * A panel follower shares the TDDI die with the display.  It must not
+	 * issue an engineering reset before the panel owns and prepares that die.
+	 * The non-follower path is kept byte-for-byte equivalent to the known-good
+	 * E12 cold boot sequence.
+	 */
+	if (!ts->is_panel_follower) {
+		WRITE_ONCE(ts->panel_on, true);
+		NVT_LOG("Hi1\n");
+		nvt_eng_reset();
+		NVT_LOG("Hi2\n");
 #if NVT_TOUCH_SUPPORT_HW_RST
-	gpio_set_value(ts->reset_gpio, 1);
+		gpio_set_value(ts->reset_gpio, 1);
 #endif
-
-	int32_t retry_count = 0;
-	// need 10ms delay after POR(power on reset)
-	msleep(10);
-
-	while (!ts->panel_on) {
-		if(retry_count > 5) {
-			ret = -EPROBE_DEFER;
-			NVT_ERR("panel wait failed, ret=%d\n", ret);
-			goto err_panelwait_failed;
-		}
-		NVT_LOG("panel is off, retry=%d\n", retry_count);
-		retry_count++;
-		msleep(200);
+		/* need 10ms delay after POR (power-on reset) */
+		usleep_range(10000, 11000);
 	}
 
 	//---check chip version trim---
@@ -1344,8 +1630,7 @@ NVT_LOG("Hi2\n");
 #if TOUCH_MAX_FINGER_NUM > 1
 	input_set_abs_params(ts->input_dev, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);    //area = 255
 
-	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_X, 0, ts->abs_x_max * 10 - 1, 0, 0);
-	input_set_abs_params(ts->input_dev, ABS_MT_POSITION_Y, 0, ts->abs_y_max * 10 - 1, 0, 0);
+	nvt_ts_set_touch_abs_params();
 #if MT_PROTOCOL_B
 	// no need to set ABS_MT_TRACKING_ID, input_mt_init_slots() already set it
 #else
@@ -1389,20 +1674,7 @@ NVT_LOG("Hi2\n");
 		ts->pen_input_dev->keybit[BIT_WORD(BTN_STYLUS2)] |= BIT_MASK(BTN_STYLUS2);
 		ts->pen_input_dev->propbit[0] = BIT(INPUT_PROP_DIRECT);
 
-		int x_max, y_max;
-
-		if (ts->wgp_stylus) {
-			x_max = ts->abs_x_max * 10 - 1;
-			y_max = ts->abs_y_max * 10 - 1;
-		} else {
-			x_max = ts->abs_x_max - 1;
-			y_max = ts->abs_y_max - 1;
-		}
-
-		input_set_abs_params(ts->pen_input_dev, ABS_X, 0, x_max, 0, 0);
-		input_set_abs_params(ts->pen_input_dev, ABS_Y, 0, y_max , 0, 0);
-		input_abs_set_res(ts->pen_input_dev, ABS_X, x_max / PANEL_DEFAULT_WIDTH_MM);
-		input_abs_set_res(ts->pen_input_dev, ABS_Y, y_max / PANEL_DEFAULT_HEIGHT_MM);
+		nvt_ts_set_pen_abs_params();
 
 		input_set_abs_params(ts->pen_input_dev, ABS_PRESSURE, 0, PEN_PRESSURE_MAX, 0, 0);
 		input_set_abs_params(ts->pen_input_dev, ABS_DISTANCE, 0, PEN_DISTANCE_MAX, 0, 0);
@@ -1424,24 +1696,34 @@ NVT_LOG("Hi2\n");
 
 	//---set int-pin & request irq---
 	client->irq = gpio_to_irq(ts->irq_gpio);
-	if (client->irq) {
-		NVT_LOG("int_trigger_type=%d\n", ts->int_trigger_type);
-		ts->irq_enabled = true;
-		ret = request_threaded_irq(client->irq, NULL, nvt_ts_work_func,
-				ts->int_trigger_type | IRQF_ONESHOT, NVT_SPI_NAME, ts);
-		if (ret != 0) {
-			NVT_ERR("request irq failed. ret=%d\n", ret);
-			goto err_int_request_failed;
-		} else {
-			nvt_irq_enable(false);
-			NVT_LOG("request irq %d succeed\n", client->irq);
-		}
+	if (client->irq < 0) {
+		ret = client->irq;
+		NVT_ERR("gpio_to_irq failed. ret=%d\n", ret);
+		goto err_int_request_failed;
 	}
+
+	NVT_LOG("int_trigger_type=%d\n", ts->int_trigger_type);
+	ts->irq_enabled = !ts->is_panel_follower;
+	ret = request_threaded_irq(client->irq, NULL, nvt_ts_work_func,
+				   ts->int_trigger_type | IRQF_ONESHOT |
+				   (ts->is_panel_follower ? IRQF_NO_AUTOEN : 0),
+				   NVT_SPI_NAME, ts);
+	if (ret != 0) {
+		NVT_ERR("request irq failed. ret=%d\n", ret);
+		goto err_int_request_failed;
+	}
+	ts->irq_requested = true;
+	if (!ts->is_panel_follower)
+		nvt_irq_enable(false);
+	NVT_LOG("request irq %d %s\n", client->irq,
+		ts->is_panel_follower ? "disabled until firmware is ready" :
+		"using legacy cold-boot sequencing");
 
 	ts->pen_is_charge = false;
 
 	ts->lkdown_readed =false;
-	pm_stay_awake(&client->dev);
+	if (!ts->is_panel_follower)
+		pm_stay_awake(&client->dev);
 
 	ts->ic_state = NVT_IC_INIT;
 	ts->dev_pm_suspend = false;
@@ -1456,15 +1738,16 @@ NVT_LOG("Hi2\n");
 //#endif
 
 #if BOOT_UPDATE_FIRMWARE
-	nvt_fwu_wq = alloc_workqueue("nvt_fwu_wq", WQ_UNBOUND | WQ_MEM_RECLAIM, 1);
-	if (!nvt_fwu_wq) {
-		NVT_ERR("nvt_fwu_wq create workqueue failed\n");
-		ret = -ENOMEM;
-		goto err_create_nvt_fwu_wq_failed;
+	if (!ts->is_panel_follower) {
+		nvt_fwu_wq = alloc_workqueue("nvt_fwu_wq",
+					     WQ_UNBOUND | WQ_MEM_RECLAIM, 1);
+		if (!nvt_fwu_wq) {
+			NVT_ERR("nvt_fwu_wq create workqueue failed\n");
+			ret = -ENOMEM;
+			goto err_create_nvt_fwu_wq_failed;
+		}
+		INIT_DELAYED_WORK(&ts->nvt_fwu_work, Boot_Update_Firmware);
 	}
-	INIT_DELAYED_WORK(&ts->nvt_fwu_work, Boot_Update_Firmware);
-	// please make sure boot update start after display reset(RESX) sequence
-	queue_delayed_work(nvt_fwu_wq, &ts->nvt_fwu_work, 0);
 #endif
 
 	NVT_LOG("NVT_TOUCH_ESD_PROTECT is %d\n", NVT_TOUCH_ESD_PROTECT);
@@ -1476,8 +1759,6 @@ NVT_LOG("Hi2\n");
 		ret = -ENOMEM;
 		goto err_create_nvt_esd_check_wq_failed;
 	}
-	queue_delayed_work(nvt_esd_check_wq, &nvt_esd_check_work,
-			msecs_to_jiffies(NVT_TOUCH_ESD_CHECK_PERIOD));
 #endif /* #if NVT_TOUCH_ESD_PROTECT */
 
 	ts->event_wq = alloc_workqueue("nvt-event-queue",
@@ -1488,41 +1769,91 @@ NVT_LOG("Hi2\n");
 		goto err_alloc_work_thread_failed;
 	}
 	INIT_WORK(&ts->resume_work, nvt_resume_work);
-	INIT_WORK(&ts->suspend_work, nvt_suspend_work);
 
-	bTouchIsAwake = 1;
-	NVT_LOG("end\n");
+	/*
+	 * Register only after every callback-visible resource exists.  If the
+	 * panel object is not registered yet, this is the sole allowed probe
+	 * defer and it occurs before any follower SPI write or reset.
+	 */
+	if (ts->is_panel_follower) {
+		ts->panel_follower.funcs = &nt36xxx_panel_follower_funcs;
+		ret = drm_panel_add_follower(&client->dev,
+					     &ts->panel_follower);
+		if (ret) {
+			NVT_ERR("failed to add panel follower: %d\n", ret);
+			goto err_register_panel_follower_failed;
+		}
+		ts->panel_follower_registered = true;
+	}
 
-	nvt_irq_enable(true);
+	{
+		unsigned long flags;
+		bool queue_resume;
+
+		spin_lock_irqsave(&ts->lifecycle_lock, flags);
+		ts->resources_ready = true;
+		queue_resume = ts->is_panel_follower && ts->panel_on &&
+			       !ts->stopping;
+		spin_unlock_irqrestore(&ts->lifecycle_lock, flags);
+
+		if (queue_resume)
+			queue_work(ts->event_wq, &ts->resume_work);
+	}
+
+	if (!ts->is_panel_follower) {
+		WRITE_ONCE(ts->touch_awake, true);
+#if BOOT_UPDATE_FIRMWARE
+		queue_delayed_work(nvt_fwu_wq, &ts->nvt_fwu_work, 0);
+#endif
+#if NVT_TOUCH_ESD_PROTECT
+		queue_delayed_work(nvt_esd_check_wq, &nvt_esd_check_work,
+				   msecs_to_jiffies(NVT_TOUCH_ESD_CHECK_PERIOD));
+#endif
+		if (ts->irq_requested)
+			nvt_irq_enable(true);
+	}
+
+	NVT_LOG("probe complete: follower=%u panel_on=%u\n",
+		ts->is_panel_follower, READ_ONCE(ts->panel_on));
+
+	ret = device_create_file(&client->dev, &dev_attr_point_data);
+	if (ret)
+		dev_warn(&client->dev,
+			 "failed to create point_data diagnostic: %d\n", ret);
+	else
+		ts->point_data_attr_created = true;
+
+	ret = device_create_file(&client->dev, &dev_attr_touch_state);
+	if (ret)
+		dev_warn(&client->dev,
+			 "failed to create touch_state diagnostic: %d\n", ret);
+	else
+		ts->touch_state_attr_created = true;
 
 	return 0;
 
+err_register_panel_follower_failed:
 err_alloc_work_thread_failed:
-
 #if NVT_TOUCH_ESD_PROTECT
-	if (nvt_esd_check_wq) {
-		cancel_delayed_work_sync(&nvt_esd_check_work);
-		destroy_workqueue(nvt_esd_check_wq);
-		nvt_esd_check_wq = NULL;
-	}
 err_create_nvt_esd_check_wq_failed:
 #endif
 #if BOOT_UPDATE_FIRMWARE
-	if (nvt_fwu_wq) {
-		cancel_delayed_work_sync(&ts->nvt_fwu_work);
-		destroy_workqueue(nvt_fwu_wq);
-		nvt_fwu_wq = NULL;
-	}
 err_create_nvt_fwu_wq_failed:
-
 #endif
-	free_irq(client->irq, ts);
+	nvt_unregister_panel_follower(ts);
+	nvt_destroy_workqueues(ts);
+	if (ts->irq_requested) {
+		free_irq(client->irq, ts);
+		ts->irq_requested = false;
+	}
 err_int_request_failed:
+	nvt_unregister_panel_follower(ts);
 	if (ts->pen_support) {
 		input_unregister_device(ts->pen_input_dev);
 		ts->pen_input_dev = NULL;
 	}
 err_pen_input_register_device_failed:
+	nvt_unregister_panel_follower(ts);
 	if (ts->pen_support) {
 		if (ts->pen_input_dev) {
 			input_free_device(ts->pen_input_dev);
@@ -1530,16 +1861,18 @@ err_pen_input_register_device_failed:
 		}
 	}
 err_pen_input_dev_alloc_failed:
+	nvt_unregister_panel_follower(ts);
 	input_unregister_device(ts->input_dev);
 	ts->input_dev = NULL;
 err_input_register_device_failed:
+	nvt_unregister_panel_follower(ts);
 	if (ts->input_dev) {
 		input_free_device(ts->input_dev);
 		ts->input_dev = NULL;
 	}
 err_input_dev_alloc_failed:
-err_panelwait_failed:
 err_chipvertrim_failed:
+	nvt_unregister_panel_follower(ts);
 	mutex_destroy(&ts->xbuf_lock);
 	mutex_destroy(&ts->lock);
 	nvt_gpio_deconfig(ts);
@@ -1574,26 +1907,22 @@ return:
 static void nvt_ts_remove(struct spi_device *client)
 {
 	NVT_LOG("Removing driver...\n");
-
-#if NVT_TOUCH_ESD_PROTECT
-	if (nvt_esd_check_wq) {
-		cancel_delayed_work_sync(&nvt_esd_check_work);
-		nvt_esd_check_enable(false);
-		destroy_workqueue(nvt_esd_check_wq);
-		nvt_esd_check_wq = NULL;
+	if (ts->touch_state_attr_created) {
+		device_remove_file(&client->dev, &dev_attr_touch_state);
+		ts->touch_state_attr_created = false;
 	}
-#endif
-
-#if BOOT_UPDATE_FIRMWARE
-	if (nvt_fwu_wq) {
-		cancel_delayed_work_sync(&ts->nvt_fwu_work);
-		destroy_workqueue(nvt_fwu_wq);
-		nvt_fwu_wq = NULL;
+	if (ts->point_data_attr_created) {
+		device_remove_file(&client->dev, &dev_attr_point_data);
+		ts->point_data_attr_created = false;
 	}
-#endif
 
+	nvt_unregister_panel_follower(ts);
 	nvt_irq_enable(false);
-	free_irq(client->irq, ts);
+	nvt_destroy_workqueues(ts);
+	if (ts->irq_requested) {
+		free_irq(client->irq, ts);
+		ts->irq_requested = false;
+	}
 
 	mutex_destroy(&ts->xbuf_lock);
 	mutex_destroy(&ts->lock);
@@ -1623,27 +1952,18 @@ static void nvt_ts_remove(struct spi_device *client)
 static void nvt_ts_shutdown(struct spi_device *client)
 {
 	NVT_LOG("Shutdown driver...\n");
+	if (ts->touch_state_attr_created) {
+		device_remove_file(&client->dev, &dev_attr_touch_state);
+		ts->touch_state_attr_created = false;
+	}
+	if (ts->point_data_attr_created) {
+		device_remove_file(&client->dev, &dev_attr_point_data);
+		ts->point_data_attr_created = false;
+	}
 
+	nvt_unregister_panel_follower(ts);
 	nvt_irq_enable(false);
-
-	destroy_workqueue(ts->event_wq);
-
-#if NVT_TOUCH_ESD_PROTECT
-	if (nvt_esd_check_wq) {
-		cancel_delayed_work_sync(&nvt_esd_check_work);
-		nvt_esd_check_enable(false);
-		destroy_workqueue(nvt_esd_check_wq);
-		nvt_esd_check_wq = NULL;
-	}
-#endif /* #if NVT_TOUCH_ESD_PROTECT */
-
-#if BOOT_UPDATE_FIRMWARE
-	if (nvt_fwu_wq) {
-		cancel_delayed_work_sync(&ts->nvt_fwu_work);
-		destroy_workqueue(nvt_fwu_wq);
-		nvt_fwu_wq = NULL;
-	}
-#endif
+	nvt_destroy_workqueues(ts);
 }
 
 /*******************************************************
@@ -1656,17 +1976,25 @@ return:
 static int32_t nvt_ts_suspend(struct device *dev)
 {
 	uint8_t buf[4] = {0};
+	bool was_awake;
 #if MT_PROTOCOL_B
 	uint32_t i = 0;
 #endif
 
-	if (!bTouchIsAwake) {
+	was_awake = READ_ONCE(ts->touch_awake);
+	if (!was_awake) {
 		NVT_LOG("Touch is already suspend\n");
 		return 0;
 	}
 
 	pm_stay_awake(dev);
 	ts->ic_state = NVT_IC_SUSPEND_IN;
+
+#if NVT_TOUCH_ESD_PROTECT
+	NVT_LOG("cancel delayed work sync\n");
+	cancel_delayed_work_sync(&nvt_esd_check_work);
+	nvt_esd_check_enable(false);
+#endif /* #if NVT_TOUCH_ESD_PROTECT */
 
 	if (!ts->db_wakeup) {
 		if (!ts->irq_enabled)
@@ -1675,21 +2003,18 @@ static int32_t nvt_ts_suspend(struct device *dev)
 			nvt_irq_enable(false);
 	}
 
-#if NVT_TOUCH_ESD_PROTECT
-	NVT_LOG("cancel delayed work sync\n");
-	cancel_delayed_work_sync(&nvt_esd_check_work);
-	nvt_esd_check_enable(false);
-#endif /* #if NVT_TOUCH_ESD_PROTECT */
-
 	mutex_lock(&ts->lock);
+	if (!READ_ONCE(ts->touch_awake)) {
+		mutex_unlock(&ts->lock);
+		pm_relax(dev);
+		return 0;
+	}
 
 	NVT_LOG("suspend start\n");
 
-	bTouchIsAwake = 0;
-
 	if (ts->pen_input_dev_enable) {
-		NVT_LOG("if enable pen,will close it");
-		disable_pen_input_device(true);
+		NVT_LOG("if enable pen, will close it\n");
+		__nvt_set_pen_state(true);
 	}
 
 	if (ts->db_wakeup) {
@@ -1709,6 +2034,7 @@ static int32_t nvt_ts_suspend(struct device *dev)
 		buf[1] = 0x11;
 		CTP_SPI_WRITE(ts->client, buf, 2);
 	}
+	nvt_set_touch_awake_state(ts, false);
 
 	mutex_unlock(&ts->lock);
 
@@ -1749,45 +2075,78 @@ return:
 *******************************************************/
 static int32_t nvt_ts_resume(struct device *dev)
 {
-	int ret = 0;
-	if (bTouchIsAwake) {
+	bool hold_wake = ts->dev_pm_suspend;
+	int ret;
+
+	if (READ_ONCE(ts->touch_awake)) {
 		NVT_LOG("Touch is already resume\n");
 		return 0;
 	}
+	if (ts->is_panel_follower && !nvt_panel_resume_allowed(ts)) {
+		NVT_LOG("panel is not ready for touch resume\n");
+		return -EHOSTDOWN;
+	}
 
-	if (ts->dev_pm_suspend)
+	/* Keep every failure path quiescent before taking the SPI mutex. */
+	if (ts->irq_requested)
+		nvt_irq_enable(false);
+#if NVT_TOUCH_ESD_PROTECT
+	if (nvt_esd_check_wq) {
+		cancel_delayed_work_sync(&nvt_esd_check_work);
+		nvt_esd_check_enable(false);
+	}
+#endif
+
+	if (hold_wake)
 		pm_stay_awake(dev);
 
 	mutex_lock(&ts->lock);
-
-	NVT_LOG("resume start\n");
-	ts->ic_state = NVT_IC_RESUME_IN;
-
-	// please make sure display reset(RESX) sequence and mipi dsi cmds sent before this
-#if NVT_TOUCH_SUPPORT_HW_RST
-	gpio_set_value(ts->reset_gpio, 1);
-#endif
-	ret = nvt_update_firmware(ts->fw_name);
-	if (ret)
-		NVT_ERR("download firmware failed\n");
-
-	nvt_check_fw_reset_state(RESET_STATE_REK);
-
-	if (!ts->db_wakeup && !ts->irq_enabled) {
-		nvt_irq_enable(true);
+	if (ts->is_panel_follower && !nvt_panel_is_on(ts)) {
+		ret = -EHOSTDOWN;
+		goto resume_fail;
 	}
 
-#if NVT_TOUCH_ESD_PROTECT
-	nvt_esd_check_enable(false);
-	queue_delayed_work(nvt_esd_check_wq, &nvt_esd_check_work,
-			msecs_to_jiffies(NVT_TOUCH_ESD_CHECK_PERIOD));
-#endif /* #if NVT_TOUCH_ESD_PROTECT */
+	ts->resume_count++;
+	NVT_LOG("follower resume #%u start\n", ts->resume_count);
+	ts->ic_state = NVT_IC_RESUME_IN;
 
-	bTouchIsAwake = 1;
+	/*
+	 * The panel has already reset and initialized the shared TDDI.  A
+	 * follower may only use the HW-CRC download path, which is explicitly
+	 * guaranteed not to issue a standalone engineering reset.
+	 */
+	if (ts->is_panel_follower)
+		ret = nvt_update_firmware_no_eng_reset(ts->fw_name);
+	else
+		ret = nvt_update_firmware(ts->fw_name);
+	if (ret) {
+		NVT_ERR("download firmware failed: %d\n", ret);
+		goto resume_fail;
+	}
 
-	mutex_unlock(&ts->lock);
+	ret = nvt_check_fw_reset_state(RESET_STATE_REK);
+	if (ret) {
+		NVT_ERR("firmware did not reach ReK: %d\n", ret);
+		goto resume_fail;
+	}
 
-	disable_pen_input_device(false);
+	if (ts->is_panel_follower && !nvt_panel_is_on(ts)) {
+		ret = -EHOSTDOWN;
+		goto resume_fail;
+	}
+
+	ret = __nvt_set_pen_state(false);
+	if (ret) {
+		NVT_ERR("failed to enable pen mailbox: %d\n", ret);
+		goto resume_fail;
+	}
+
+	if (ts->is_panel_follower && !nvt_commit_follower_awake(ts)) {
+		ret = -EHOSTDOWN;
+		goto resume_fail;
+	}
+	if (!ts->is_panel_follower)
+		nvt_set_touch_awake_state(ts, true);
 
 	if (likely(ts->ic_state == NVT_IC_RESUME_IN)) {
 		ts->ic_state = NVT_IC_RESUME_OUT;
@@ -1800,11 +2159,30 @@ static int32_t nvt_ts_resume(struct device *dev)
 		NVT_LOG("execute delayed command, set double click wakeup %d\n", ts->db_wakeup);
 	}
 
-	if (ts->dev_pm_suspend)
+	mutex_unlock(&ts->lock);
+
+	if (ts->irq_requested)
+		nvt_irq_enable(true);
+#if NVT_TOUCH_ESD_PROTECT
+	nvt_esd_check_enable(false);
+	queue_delayed_work(nvt_esd_check_wq, &nvt_esd_check_work,
+			   msecs_to_jiffies(NVT_TOUCH_ESD_CHECK_PERIOD));
+#endif
+
+	if (hold_wake)
 		pm_relax(dev);
-	NVT_LOG("end\n");
+	NVT_LOG("follower resume #%u complete\n", ts->resume_count);
 
 	return 0;
+
+resume_fail:
+	nvt_set_touch_awake_state(ts, false);
+	ts->ic_state = NVT_IC_SUSPEND_OUT;
+	mutex_unlock(&ts->lock);
+	if (hold_wake)
+		pm_relax(dev);
+	NVT_ERR("resume failed closed: %d (IRQ off, ESD off)\n", ret);
+	return ret;
 }
 
 static int nvt_pm_suspend(struct device *dev)
@@ -1838,32 +2216,44 @@ static const struct dev_pm_ops nvt_dev_pm_ops = {
 
 static int panel_prepared(struct drm_panel_follower *follower)
 {
-	struct nvt_ts_data *ts = container_of(follower, struct nvt_ts_data, panel_follower);
+	struct nvt_ts_data *ts = container_of(follower, struct nvt_ts_data,
+					       panel_follower);
+	unsigned long flags;
+	bool queue_resume;
 
+	spin_lock_irqsave(&ts->lifecycle_lock, flags);
 	ts->panel_on = true;
+	queue_resume = ts->resources_ready && !ts->stopping;
+	spin_unlock_irqrestore(&ts->lifecycle_lock, flags);
 
 	NVT_LOG("panel prepared\n");
 
-	if (!ts->event_wq) {
-		return 0;
-	}
-
-	flush_workqueue(ts->event_wq);
-	queue_work(ts->event_wq, &ts->resume_work);
+	if (queue_resume)
+		queue_work(ts->event_wq, &ts->resume_work);
 
 	return 0;
 }
 
 static int panel_unpreparing(struct drm_panel_follower *follower)
 {
-	struct nvt_ts_data *ts = container_of(follower, struct nvt_ts_data, panel_follower);
+	struct nvt_ts_data *ts = container_of(follower, struct nvt_ts_data,
+					       panel_follower);
+	unsigned long flags;
+	bool resources_ready;
 
+	spin_lock_irqsave(&ts->lifecycle_lock, flags);
 	ts->panel_on = false;
+	resources_ready = ts->resources_ready;
+	spin_unlock_irqrestore(&ts->lifecycle_lock, flags);
 
 	NVT_LOG("panel unpreparing\n");
 
+	/* The callback is the barrier before the panel's physical reset. */
 	if (ts->event_wq)
-		flush_workqueue(ts->event_wq);
+		cancel_work_sync(&ts->resume_work);
+
+	if (!resources_ready)
+		return 0;
 	return nvt_ts_suspend(&ts->client->dev);
 }
 
@@ -1874,14 +2264,17 @@ static struct drm_panel_follower_funcs nt36xxx_panel_follower_funcs = {
 
 static const struct spi_device_id nvt_ts_id[] = {
 	{ NVT_SPI_NAME, 0 },
+	/*
+	 * spi_device_id is derived from the OF compatible's device name
+	 * ("novatek,NVT-ts-spi" -> "NVT-ts-spi"). The driver name stays
+	 * NVT-ts; both strings have to be in the table the spi_driver
+	 * actually uses, or the kernel warns that NVT-ts has no id for
+	 * this compatible.
+	 */
+	{ "NVT-ts-spi", 0 },
 	{ }
 };
-
-static const struct spi_device_id nt36xxx_spi_ids[] = {
-	{ "NVT-ts-spi" },
-	{ },
-};
-MODULE_DEVICE_TABLE(spi, nt36xxx_spi_ids);
+MODULE_DEVICE_TABLE(spi, nvt_ts_id);
 
 #ifdef CONFIG_OF
 static const struct of_device_id nt36xxx_of_match[] = {

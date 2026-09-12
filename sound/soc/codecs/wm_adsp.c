@@ -741,6 +741,10 @@ static int wm_adsp_request_firmware_file(struct wm_adsp *dsp,
 		*filename = kasprintf(GFP_KERNEL, "%s%s-%s-%s-%s.%s", dir, dsp->part,
 				      fwf, wm_adsp_fw[dsp->fw].file, system_name,
 				      filetype);
+	else if (asoc_component_prefix)
+		*filename = kasprintf(GFP_KERNEL, "%s%s-%s-%s-%s.%s", dir, dsp->part,
+				      fwf, wm_adsp_fw[dsp->fw].file,
+				      asoc_component_prefix, filetype);
 	else
 		*filename = kasprintf(GFP_KERNEL, "%s%s-%s-%s.%s", dir, dsp->part, fwf,
 				      wm_adsp_fw[dsp->fw].file, filetype);
@@ -845,8 +849,13 @@ static int wm_adsp_request_firmware_files(struct wm_adsp *dsp,
 	ret = wm_adsp_request_firmware_file(dsp, wmfw_firmware, wmfw_filename,
 					    cirrus_dir, NULL, NULL, "wmfw");
 	if (!ret || dsp->wmfw_optional) {
-		wm_adsp_request_firmware_file(dsp, coeff_firmware, coeff_filename,
-					      cirrus_dir, NULL, NULL, "bin");
+		/* DT systems have component prefixes but no ACPI system_name. */
+		if (suffix)
+			wm_adsp_request_firmware_file(dsp, coeff_firmware, coeff_filename,
+						      cirrus_dir, NULL, suffix, "bin");
+		if (!*coeff_firmware)
+			wm_adsp_request_firmware_file(dsp, coeff_firmware, coeff_filename,
+						      cirrus_dir, NULL, NULL, "bin");
 		return 0;
 	}
 
@@ -1069,9 +1078,15 @@ static int wm_adsp_pre_run(struct cs_dsp *cs_dsp)
 static int wm_adsp_event_post_run(struct cs_dsp *cs_dsp)
 {
 	struct wm_adsp *dsp = container_of(cs_dsp, struct wm_adsp, cs_dsp);
+	int ret;
 
-	if (wm_adsp_fw[dsp->fw].num_caps != 0)
-		return wm_adsp_buffer_init(dsp);
+	if (wm_adsp_fw[dsp->fw].num_caps != 0) {
+		ret = wm_adsp_buffer_init(dsp);
+		if (ret)
+			return ret;
+	}
+	if (dsp->post_run)
+		return dsp->post_run(dsp);
 
 	return 0;
 }
@@ -1079,6 +1094,9 @@ static int wm_adsp_event_post_run(struct cs_dsp *cs_dsp)
 static void wm_adsp_event_post_stop(struct cs_dsp *cs_dsp)
 {
 	struct wm_adsp *dsp = container_of(cs_dsp, struct wm_adsp, cs_dsp);
+
+	if (dsp->post_stop)
+		dsp->post_stop(dsp);
 
 	if (wm_adsp_fw[dsp->fw].num_caps != 0)
 		wm_adsp_buffer_free(dsp);

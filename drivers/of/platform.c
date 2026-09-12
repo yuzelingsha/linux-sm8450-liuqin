@@ -559,13 +559,30 @@ static int __init of_platform_default_populate_init(void)
 		}
 
 	} else {
+		struct device_node *rmem;
+
 		/*
 		 * Handle certain compatibles explicitly, since we don't want to create
 		 * platform_devices for every node in /reserved-memory with a
-		 * "compatible",
+		 * "compatible".
+		 *
+		 * Walk the children of /reserved-memory rather than the whole tree:
+		 * every binding in the list above places its node there, and a
+		 * matching compatible elsewhere is not one of these carveouts. On
+		 * Qualcomm devices the bootloader merges vendor overlay fragments
+		 * into the tree it hands over, which can deposit a copy of the
+		 * vendor's ramoops node under an unrelated parent whose #cells and
+		 * ranges make its reg decode to a nonsense address; probing that
+		 * copy dereferences an ioremap of unbacked physical address 0 and
+		 * kills the boot.
 		 */
-		for_each_matching_node(node, reserved_mem_matches)
-			of_platform_device_create(node, NULL, NULL);
+		rmem = of_find_node_by_path("/reserved-memory");
+		if (rmem) {
+			for_each_child_of_node(rmem, node)
+				if (of_match_node(reserved_mem_matches, node))
+					of_platform_device_create(node, NULL, NULL);
+			of_node_put(rmem);
+		}
 
 		node = of_find_node_by_path("/firmware");
 		if (node) {

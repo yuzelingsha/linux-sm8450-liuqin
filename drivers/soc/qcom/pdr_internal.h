@@ -23,6 +23,7 @@
 #define SERVREG_STATE_UPDATED_IND_MAX_LEN		79
 #define SERVREG_GET_DOMAIN_LIST_RESP_MAX_LEN		2389
 #define SERVREG_LOC_PFR_RESP_MAX_LEN			10
+#define SERVREG_LOC_PFR_REQ_MAX_LEN			326
 
 struct servreg_location_entry {
 	char name[SERVREG_NAME_LENGTH + 1];

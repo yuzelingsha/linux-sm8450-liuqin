@@ -809,6 +809,23 @@ config HID_MULTITOUCH
 	  To compile this driver as a module, choose M here: the
 	  module will be called hid-multitouch.
 
+config HID_NANOSIC
+	tristate "Nanosic WN8030 keyboard bridge"
+	depends on I2C
+	help
+	  Support for the Nanosic WN8030 bridge chip, which connects a
+	  detachable magnetic keyboard folio to the host over I2C. It is
+	  found in the Xiaomi Pad 6 Pro, where it presents the folio's
+	  keyboard, media keys, mouse and touchpad.
+
+	  The bridge is not an HID-over-I2C device: it wraps standard HID
+	  input reports in a private framing. This driver unwraps them and
+	  feeds the HID core, which then binds hid-generic and, for the
+	  touchpad, hid-multitouch.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called hid-nanosic.
+
 config HID_NINTENDO
 	tristate "Nintendo Joy-Con, NSO, and Pro Controller support"
 	depends on NEW_LEDS

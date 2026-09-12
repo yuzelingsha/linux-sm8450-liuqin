@@ -1101,6 +1101,14 @@ properties:
 
       - items:
           - enum:
+              - nothing,pong
+              - xiaomi,diting
+              - xiaomi,liuqin
+              - xiaomi,yudi
+          - const: qcom,sm8475
+
+      - items:
+          - enum:
               - qcom,sm8550-hdk
               - qcom,sm8550-mtp
               - qcom,sm8550-qrd

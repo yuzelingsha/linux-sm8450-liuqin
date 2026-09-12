@@ -216,6 +216,7 @@ static const struct qcom_ubwc_cfg_data x1e80100_data = {
 
 static const struct of_device_id qcom_ubwc_configs[] __maybe_unused = {
 	{ .compatible = "qcom,apq8096", .data = &msm8998_data },
+	{ .compatible = "qcom,cape", .data = &sm8350_data, },
 	{ .compatible = "qcom,msm8917", .data = &msm8937_data },
 	{ .compatible = "qcom,msm8937", .data = &msm8937_data },
 	{ .compatible = "qcom,msm8953", .data = &msm8937_data },
@@ -250,6 +251,7 @@ static const struct of_device_id qcom_ubwc_configs[] __maybe_unused = {
 	{ .compatible = "qcom,sm8250", .data = &sm8250_data, },
 	{ .compatible = "qcom,sm8350", .data = &sm8350_data, },
 	{ .compatible = "qcom,sm8450", .data = &sm8350_data, },
+	{ .compatible = "qcom,sm8475", .data = &sm8350_data, },
 	{ .compatible = "qcom,sm8550", .data = &sm8550_data, },
 	{ .compatible = "qcom,sm8650", .data = &sm8550_data, },
 	{ .compatible = "qcom,sm8750", .data = &sm8750_data, },

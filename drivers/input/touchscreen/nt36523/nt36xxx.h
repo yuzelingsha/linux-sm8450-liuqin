@@ -53,6 +53,9 @@
 #define NVT_LOG(fmt, args...)    pr_info("[%s] %s %d: " fmt, NVT_SPI_NAME, __func__, __LINE__, ##args)
 #endif
 #define NVT_ERR(fmt, args...)    pr_err("[%s] %s %d: " fmt, NVT_SPI_NAME, __func__, __LINE__, ##args)
+#define NVT_ERR_ONCE(fmt, args...) \
+	pr_err_once("[%s] %s %d: " fmt, NVT_SPI_NAME, \
+		    __func__, __LINE__, ##args)
 
 //---Input device info.---
 #define NVT_TS_NAME "NVTCapacitiveTouchScreen"
@@ -61,6 +64,12 @@
 //---Touch info.---
 #define TOUCH_DEFAULT_MAX_WIDTH 1800
 #define TOUCH_DEFAULT_MAX_HEIGHT 2880
+/*
+ * The firmware reports finger coordinates in tenths of a panel pixel, so the
+ * range it can produce is abs_x_max * NVT_COORD_SCALE by abs_y_max *
+ * NVT_COORD_SCALE. The input device reports whole panel pixels.
+ */
+#define NVT_COORD_SCALE 10
 #define TOUCH_MAX_FINGER_NUM 10
 #define TOUCH_KEY_NUM 0
 #if TOUCH_KEY_NUM > 0
@@ -133,7 +142,14 @@ struct nvt_ts_data {
 #endif
 #endif
 	struct drm_panel_follower panel_follower;
+	/* Serializes panel ownership, resource readiness and wake commit. */
+	spinlock_t lifecycle_lock;
+	bool is_panel_follower;
 	bool panel_on;
+	bool panel_follower_registered;
+	bool resources_ready;
+	bool stopping;
+	bool touch_awake;
 	uint32_t config_array_size;
 	struct nvt_config_info *config_array;
 	const char *fw_name;
@@ -161,16 +177,23 @@ struct nvt_ts_data {
 	uint8_t *xbuf;
 	struct mutex xbuf_lock;
 	bool irq_enabled;
+	bool irq_requested;
+	u32 eng_reset_count;
+	u32 resume_count;
+	u32 firmware_update_count;
+	bool point_data_attr_created;
+	bool touch_state_attr_created;
 	uint8_t cascade;
 	bool pen_support;
 	bool wgp_stylus;
+	/* Pen report scale, in firmware units per panel pixel. */
+	uint8_t pen_coord_scale;
 	uint8_t x_gang_num;
 	uint8_t y_gang_num;
 	struct input_dev *pen_input_dev;
 	bool pen_input_dev_enable;
 	int8_t pen_phys[32];
 	struct workqueue_struct *event_wq;
-	struct work_struct suspend_work;
 	struct work_struct resume_work;
 	int result_type;
 	int panel_index;
@@ -222,6 +245,7 @@ extern struct nvt_ts_data *ts;
 //---extern functions---
 int32_t CTP_SPI_READ(struct spi_device *client, uint8_t *buf, uint16_t len);
 int32_t CTP_SPI_WRITE(struct spi_device *client, uint8_t *buf, uint16_t len);
+void nvt_irq_enable(bool enable);
 void nvt_bootloader_reset(void);
 void nvt_eng_reset(void);
 void nvt_sw_reset(void);
@@ -233,6 +257,7 @@ void nvt_tx_auto_copy_mode(void);
 void nvt_set_dbgfw_status(bool enable);
 void nvt_match_fw(void);
 int32_t nvt_update_firmware(const char *firmware_name);
+int32_t nvt_update_firmware_no_eng_reset(const char *firmware_name);
 int32_t nvt_check_fw_reset_state(RST_COMPLETE_STATE check_reset_state);
 int32_t nvt_get_fw_info(void);
 int32_t nvt_clear_fw_status(void);

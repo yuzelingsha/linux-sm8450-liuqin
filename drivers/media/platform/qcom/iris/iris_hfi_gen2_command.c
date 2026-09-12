@@ -864,10 +864,10 @@ static int iris_hfi_gen2_session_pause(struct iris_inst *inst, u32 plane)
 					inst_hfi_gen2->packet->size);
 }
 
-static int iris_hfi_gen2_session_resume_drc(struct iris_inst *inst, u32 plane)
+static int iris_hfi_gen2_session_resume(struct iris_inst *inst, u32 plane, u32 reason)
 {
 	struct iris_inst_hfi_gen2 *inst_hfi_gen2 = to_iris_inst_hfi_gen2(inst);
-	u32 payload = HFI_CMD_SETTINGS_CHANGE;
+	bool no_payload = inst->core->iris_platform_data->resume_without_payload;
 
 	iris_hfi_gen2_packet_session_command(inst,
 					     HFI_CMD_RESUME,
@@ -875,31 +875,22 @@ static int iris_hfi_gen2_session_resume_drc(struct iris_inst *inst, u32 plane)
 					     HFI_HOST_FLAGS_INTR_REQUIRED),
 					     iris_hfi_gen2_get_port(plane),
 					     inst->session_id,
-					     HFI_PAYLOAD_U32,
-					     &payload,
-					     sizeof(u32));
+					     no_payload ? HFI_PAYLOAD_NONE : HFI_PAYLOAD_U32,
+					     no_payload ? NULL : &reason,
+					     no_payload ? 0 : sizeof(reason));
 
 	return iris_hfi_queue_cmd_write(inst->core, inst_hfi_gen2->packet,
 					inst_hfi_gen2->packet->size);
 }
 
+static int iris_hfi_gen2_session_resume_drc(struct iris_inst *inst, u32 plane)
+{
+	return iris_hfi_gen2_session_resume(inst, plane, HFI_CMD_SETTINGS_CHANGE);
+}
+
 static int iris_hfi_gen2_session_resume_drain(struct iris_inst *inst, u32 plane)
 {
-	struct iris_inst_hfi_gen2 *inst_hfi_gen2 = to_iris_inst_hfi_gen2(inst);
-	u32 payload = HFI_CMD_DRAIN;
-
-	iris_hfi_gen2_packet_session_command(inst,
-					     HFI_CMD_RESUME,
-					     (HFI_HOST_FLAGS_RESPONSE_REQUIRED |
-					     HFI_HOST_FLAGS_INTR_REQUIRED),
-					     iris_hfi_gen2_get_port(plane),
-					     inst->session_id,
-					     HFI_PAYLOAD_U32,
-					     &payload,
-					     sizeof(u32));
-
-	return iris_hfi_queue_cmd_write(inst->core, inst_hfi_gen2->packet,
-					inst_hfi_gen2->packet->size);
+	return iris_hfi_gen2_session_resume(inst, plane, HFI_CMD_DRAIN);
 }
 
 static int iris_hfi_gen2_session_drain(struct iris_inst *inst, u32 plane)

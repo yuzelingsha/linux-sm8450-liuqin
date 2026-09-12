@@ -17364,6 +17364,13 @@ T:	git git://git.kernel.org/pub/scm/linux/kernel/git/mtd/linux.git nand/next
 F:	drivers/mtd/nand/
 F:	include/linux/mtd/*nand*.h
 
+NANOSIC WN8030 KEYBOARD BRIDGE DRIVER
+M:	Erwin <yzddmr7@gmail.com>
+S:	Maintained
+F:	Documentation/devicetree/bindings/input/nanosic,wn8030.yaml
+F:	drivers/hid/hid-nanosic.c
+F:	tools/testing/selftests/hid/nanosic-static.py
+
 NATIONAL INSTRUMENTS SERIAL DRIVER
 M:	Chaitanya Vadrevu <chaitanya.vadrevu@emerson.com>
 L:	linux-serial@vger.kernel.org

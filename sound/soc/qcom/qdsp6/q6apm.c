@@ -41,7 +41,7 @@ static struct audioreach_graph *q6apm_get_audioreach_graph(struct q6apm *apm, ui
 {
 	struct audioreach_graph_info *info;
 	struct audioreach_graph *graph;
-	int id;
+	int id, ret;
 
 	mutex_lock(&apm->lock);
 	graph = idr_find(&apm->graph_idr, graph_id);
@@ -86,7 +86,15 @@ static struct audioreach_graph *q6apm_get_audioreach_graph(struct q6apm *apm, ui
 
 	kref_init(&graph->refcount);
 
-	q6apm_send_cmd_sync(apm, graph->graph, 0);
+	ret = q6apm_send_cmd_sync(apm, graph->graph, 0);
+	if (ret) {
+		mutex_lock(&apm->lock);
+		idr_remove(&apm->graph_idr, graph->id);
+		mutex_unlock(&apm->lock);
+		kfree(graph->graph);
+		kfree(graph);
+		return ERR_PTR(ret);
+	}
 
 	return graph;
 }
@@ -203,9 +211,7 @@ int q6apm_graph_media_format_shmem(struct q6apm_graph *graph,
 	if (!module)
 		return -ENODEV;
 
-	audioreach_set_media_format(graph, module, cfg);
-
-	return 0;
+	return audioreach_set_media_format(graph, module, cfg);
 
 }
 EXPORT_SYMBOL_GPL(q6apm_graph_media_format_shmem);
@@ -369,6 +375,7 @@ int q6apm_graph_media_format_pcm(struct q6apm_graph *graph, struct audioreach_mo
 	struct audioreach_sub_graph *sgs;
 	struct audioreach_container *container;
 	struct audioreach_module *module;
+	int ret;
 
 	list_for_each_entry(sgs, &info->sg_list, node) {
 		list_for_each_entry(container, &sgs->container_list, node) {
@@ -377,7 +384,9 @@ int q6apm_graph_media_format_pcm(struct q6apm_graph *graph, struct audioreach_mo
 					(module->module_id == MODULE_ID_RD_SHARED_MEM_EP))
 					continue;
 
-				audioreach_set_media_format(graph, module, cfg);
+				ret = audioreach_set_media_format(graph, module, cfg);
+				if (ret)
+					return ret;
 			}
 		}
 	}

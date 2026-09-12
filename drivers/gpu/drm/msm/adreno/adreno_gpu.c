@@ -385,6 +385,7 @@ int adreno_get_param(struct msm_gpu *gpu, struct msm_context *ctx,
 		return 0;
 	case MSM_PARAM_GMEM_BASE:
 		if (adreno_is_a650_family(adreno_gpu) ||
+		    adreno_is_a730(adreno_gpu) ||
 		    adreno_is_a740_family(adreno_gpu))
 			*value = 0;
 		else

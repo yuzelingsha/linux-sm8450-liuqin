@@ -156,7 +156,8 @@ int qcom_snd_apply_dai_tdm_slots_cfg(struct snd_soc_pcm_runtime *rtd,
 					       codec_cfg->rx_mask,
 					       codec_cfg->slots,
 					       codec_cfg->slot_width);
-		if (ret)
+		/* Some codecs, including CS35L41, use fixed first-slot routing. */
+		if (ret && ret != -ENOTSUPP)
 			return ret;
 	}
 

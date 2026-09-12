@@ -1366,7 +1366,17 @@ static struct msm_display_topology dpu_crtc_get_topology(
 		num_rt_intf--;
 
 	if (topology.num_dsc) {
-		if (dpu_kms->catalog->dsc_count >= num_rt_intf * 2)
+		/*
+		 * Without virtual planes each plane is limited to a single
+		 * stage, i.e. one pair of SSPP rectangles, and cannot feed
+		 * more than two layer mixers: the quad-pipe 4:4:2 topology
+		 * would leave half of the mixer lanes without valid pixel
+		 * data.  Fall back to one DSC/LM per interface, which is
+		 * also the topology the vendor kernel uses for bonded
+		 * dual-DSI DSC panels (qcom,display-topology = <2 2 2>).
+		 */
+		if (dpu_kms->catalog->dsc_count >= num_rt_intf * 2 &&
+		    (num_rt_intf * 2 <= 2 || dpu_use_virtual_planes))
 			topology.num_dsc = num_rt_intf * 2;
 		else
 			topology.num_dsc = num_rt_intf;

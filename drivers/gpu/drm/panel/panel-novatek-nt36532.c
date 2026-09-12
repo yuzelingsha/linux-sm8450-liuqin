@@ -45,6 +45,11 @@ struct panel_desc {
 	struct drm_dsc_config dsc;
 };
 
+static struct mipi_dsi_device *nt36532_cmd_dsi(struct nt36532 *ctx)
+{
+	return ctx->dsi[1] ?: ctx->dsi[0];
+}
+
 static void pipa_reset(struct nt36532 *ctx)
 {
 	gpiod_set_value_cansleep(ctx->reset_gpio, 0);
@@ -69,11 +74,7 @@ static void yudi_reset(struct nt36532 *ctx)
 
 static int pipa_init_sequence(struct nt36532 *ctx)
 {
-	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi[0] };
-
-	dsi_ctx.dsi->mode_flags |= MIPI_DSI_MODE_LPM;
-	if (ctx->dsi[0])
-		ctx->dsi[0]->mode_flags |= MIPI_DSI_MODE_LPM;
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = nt36532_cmd_dsi(ctx) };
 
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xff, 0x27);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xfb, 0x01);
@@ -148,8 +149,10 @@ static int pipa_init_sequence(struct nt36532 *ctx)
 
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xff, 0x20);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xfb, 0x01);
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x17, 0x02);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x65, 0xcc);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x6d, 0xcc);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x32, 0x72);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x17, 0x11);
 
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xff, 0x22);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xfb, 0x01);
@@ -166,6 +169,8 @@ static int pipa_init_sequence(struct nt36532 *ctx)
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xbb, 0x6e);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xbe, 0x0b);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xbf, 0x6e);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf8, 0xcc);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xf9, 0xcc);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xc1, 0x6e);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xc3, 0x6e);
 
@@ -220,6 +225,8 @@ static int pipa_init_sequence(struct nt36532 *ctx)
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x46, 0x47);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x48, 0x47);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x4a, 0x47);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x80, 0xcc);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x81, 0xcc);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x84, 0x16, 0x16, 0x16);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x85, 0x26, 0x26, 0x26);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x8b, 0xaa);
@@ -239,7 +246,7 @@ static int pipa_init_sequence(struct nt36532 *ctx)
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0c, 0x4b, 0x00);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x0e, 0xeb, 0x40);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x10, 0x4b, 0x00);
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x14, 0x11);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x14, 0x33);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x76, 0xf0);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x77, 0x02);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x79, 0x29);
@@ -270,21 +277,21 @@ static int pipa_init_sequence(struct nt36532 *ctx)
 			       0x89, 0x28, 0x00, 0x14, 0xd2, 0x00, 0x01, 0xf4,
 			       0x01, 0xab, 0x00, 0x06, 0x05, 0x7a, 0x06, 0x1a);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x92, 0x10, 0xf0);
-	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x35, 0x00);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x3b, 0x03, 0xd8, 0x1a, 0x0a, 0x0a, 0x00);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x51, 0x0f, 0xff);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x53, 0x24);
+	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0x35, 0x00);
 	mipi_dsi_dcs_exit_sleep_mode_multi(&dsi_ctx);
-	mipi_dsi_msleep(&dsi_ctx, 70);
+	mipi_dsi_msleep(&dsi_ctx, 120);
 	mipi_dsi_dcs_set_display_on_multi(&dsi_ctx);
 	mipi_dsi_msleep(&dsi_ctx, 40);
 
-	return 0;
+	return dsi_ctx.accum_err;
 }
 
 static int yudi_init_sequence(struct nt36532 *ctx)
 {
-	struct mipi_dsi_multi_context dsi_ctx = { .dsi = ctx->dsi[0] };
+	struct mipi_dsi_multi_context dsi_ctx = { .dsi = nt36532_cmd_dsi(ctx) };
 
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xff, 0x27);
 	mipi_dsi_dcs_write_seq_multi(&dsi_ctx, 0xfb, 0x01);
@@ -491,7 +498,7 @@ static const struct panel_desc yudi_desc = {
 
 static int nt36532_off(struct nt36532 *ctx)
 {
-	struct mipi_dsi_device *dsi = ctx->dsi[0];
+	struct mipi_dsi_device *dsi = nt36532_cmd_dsi(ctx);
 	struct device *dev = &dsi->dev;
 	int ret;
 
@@ -516,7 +523,7 @@ static int nt36532_off(struct nt36532 *ctx)
 static int nt36532_prepare(struct drm_panel *panel)
 {
 	struct nt36532 *ctx = to_nt36532(panel);
-	struct mipi_dsi_device *dsi = ctx->dsi[0];
+	struct mipi_dsi_device *dsi = nt36532_cmd_dsi(ctx);
 	struct device *dev = &dsi->dev;
 	struct drm_dsc_picture_parameter_set pps;
 	int ret;
@@ -528,6 +535,10 @@ static int nt36532_prepare(struct drm_panel *panel)
 	}
 
 	msleep(120);
+
+	ctx->dsi[0]->mode_flags |= MIPI_DSI_MODE_LPM;
+	if (ctx->dsi[1])
+		ctx->dsi[1]->mode_flags |= MIPI_DSI_MODE_LPM;
 
 	ctx->desc->reset_sequence(ctx);
 
@@ -567,7 +578,7 @@ static int nt36532_enable(struct drm_panel *panel)
 {
 	struct nt36532 *ctx = to_nt36532(panel);
 	struct drm_dsc_picture_parameter_set pps;
-	struct mipi_dsi_device *dsi = ctx->dsi[0];
+	struct mipi_dsi_device *dsi = nt36532_cmd_dsi(ctx);
 	struct device *dev = &dsi->dev;
 	int ret;
 
@@ -715,7 +726,8 @@ static int nt36532_probe(struct mipi_dsi_device *dsi)
 			continue;
 		/* This panel only supports DSC; unconditionally enable it */
 		ctx->dsi[i]->dsc = &ctx->dsc;
-		//ctx->dsi[i]->dsc_slice_per_pkt = 2;
+		/* vendor packs two 450-px slices into each video packet */
+		ctx->dsi[i]->dsc_slice_per_pkt = 2;
 
 		ctx->dsi[i]->lanes = 4;
 		ctx->dsi[i]->format = MIPI_DSI_FMT_RGB888;

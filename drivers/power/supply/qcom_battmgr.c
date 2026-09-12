@@ -19,6 +19,7 @@
 
 enum qcom_battmgr_variant {
 	QCOM_BATTMGR_SM8350,
+	QCOM_BATTMGR_SM8475,
 	QCOM_BATTMGR_SC8280XP,
 };
 
@@ -30,6 +31,7 @@ enum qcom_battmgr_variant {
 #define NOTIF_BAT_PROPERTY		0x30
 #define NOTIF_USB_PROPERTY		0x32
 #define NOTIF_WLS_PROPERTY		0x34
+#define NOTIF_XM_PROPERTY		0x50
 #define NOTIF_BAT_INFO			0x81
 #define NOTIF_BAT_STATUS		0x80
 
@@ -78,6 +80,26 @@ enum qcom_battmgr_variant {
 #define USB_ADAP_TYPE			7
 #define USB_MOISTURE_DET_EN		8
 #define USB_MOISTURE_DET_STS		9
+#define USB_TEMP			10
+#define USB_REAL_TYPE			11
+
+#define BATTMGR_XM_PROPERTY_GET		0x50
+#define BATTMGR_XM_PROPERTY_SET		0x51
+#define XM_AUTHENTIC			3
+#define XM_REAL_TYPE			6
+#define XM_VERIFY_PROCESS		7
+#define XM_VDM_SESSION_SEED		11
+#define XM_VDM_AUTHENTICATION		12
+#define XM_VDM_VERIFIED		13
+#define XM_CURRENT_STATE		16
+#define XM_ADAPTER_ID			17
+#define XM_ADAPTER_SVID			18
+#define XM_PD_VERIFIED			19
+#define XM_PDO2			20
+#define XM_FASTCHG_MODE			38
+#define XM_QUICK_CHARGE_TYPE		42
+#define XM_APDO_MAX			43
+#define XM_POWER_MAX			44
 
 #define BATTMGR_WLS_PROPERTY_GET	0x34
 #define BATTMGR_WLS_PROPERTY_SET	0x35
@@ -102,6 +124,32 @@ struct qcom_battmgr_property_request {
 	__le32 battery;
 	__le32 property;
 	__le32 value;
+};
+
+/*
+ * Xiaomi's charger-PD service uses this 32 byte XM frame for the session
+ * seed and authentication exchanges.  Unlike the normal 24 byte property
+ * response, this frame has no ret_code field; the wire format is confirmed
+ * by liuqin's exact qti_battery_charger.c implementation.
+ */
+struct qcom_battmgr_xm_words_message {
+	struct pmic_glink_hdr hdr;
+	__le32 property;
+	__le32 words[4];
+};
+
+enum qcom_battmgr_xm_response_kind {
+	QCOM_BATTMGR_XM_VALUE_RESPONSE,
+	QCOM_BATTMGR_XM_WORDS_RESPONSE,
+};
+
+struct qcom_battmgr_xm_pending {
+	bool active;
+	u32 opcode;
+	u32 property;
+	enum qcom_battmgr_xm_response_kind response_kind;
+	u32 value;
+	u32 words[4];
 };
 
 struct qcom_battmgr_update_request {
@@ -305,6 +353,19 @@ struct qcom_battmgr {
 	struct qcom_battmgr_usb usb;
 	struct qcom_battmgr_wireless wireless;
 
+	/* Last vendor/raw property response, serialized by @lock. */
+	unsigned int raw_opcode;
+	unsigned int raw_property;
+	unsigned int raw_value;
+	bool raw_valid;
+
+	/*
+	 * XM is a vendor service that also sends unsolicited notifications.  Keep
+	 * a complete request identity, rather than accepting the next response on
+	 * the shared completion.  @lock serializes its lifetime with the request.
+	 */
+	struct qcom_battmgr_xm_pending xm;
+
 	struct work_struct enable_work;
 
 	/*
@@ -312,6 +373,204 @@ struct qcom_battmgr {
 	 * firmware, as it then stops responding.
 	 */
 	struct mutex lock;
+};
+
+static int qcom_battmgr_request_property(struct qcom_battmgr *battmgr, int opcode,
+					 int property, u32 value);
+static int qcom_battmgr_request(struct qcom_battmgr *battmgr, void *data,
+				 size_t len);
+
+static int qcom_battmgr_xm_request_locked(struct qcom_battmgr *battmgr,
+					  u32 opcode, u32 property,
+					  u32 request_value,
+					  const u32 *words,
+					  enum qcom_battmgr_xm_response_kind response_kind,
+					  u32 *value, u32 response_words[4])
+{
+	struct qcom_battmgr_property_request property_request = {
+		.hdr.owner = cpu_to_le32(PMIC_GLINK_OWNER_BATTMGR),
+		.hdr.type = cpu_to_le32(PMIC_GLINK_REQ_RESP),
+		.hdr.opcode = cpu_to_le32(opcode),
+		.battery = cpu_to_le32(0),
+		.property = cpu_to_le32(property),
+		.value = cpu_to_le32(request_value),
+	};
+	struct qcom_battmgr_xm_words_message words_request = {
+		.hdr.owner = cpu_to_le32(PMIC_GLINK_OWNER_BATTMGR),
+		.hdr.type = cpu_to_le32(PMIC_GLINK_REQ_RESP),
+		.hdr.opcode = cpu_to_le32(opcode),
+		.property = cpu_to_le32(property),
+	};
+	void *request = &property_request;
+	size_t request_len = sizeof(property_request);
+	int ret;
+
+	if (opcode != BATTMGR_XM_PROPERTY_GET &&
+	    opcode != BATTMGR_XM_PROPERTY_SET)
+		return -EINVAL;
+
+	if (words) {
+		for (unsigned int i = 0; i < ARRAY_SIZE(words_request.words); i++)
+			words_request.words[i] = cpu_to_le32(words[i]);
+		request = &words_request;
+		request_len = sizeof(words_request);
+	}
+
+	/* The callback may run before pmic_glink_send() returns. */
+	battmgr->xm.opcode = opcode;
+	battmgr->xm.property = property;
+	battmgr->xm.response_kind = response_kind;
+	/* Publish the complete identity before the callback can observe active. */
+	smp_store_release(&battmgr->xm.active, true); /* pairs with callback acquire */
+
+	ret = qcom_battmgr_request(battmgr, request, request_len);
+	if (!ret) {
+		if (response_kind == QCOM_BATTMGR_XM_VALUE_RESPONSE) {
+			if (value)
+				*value = battmgr->xm.value;
+		} else if (response_words) {
+			memcpy(response_words, battmgr->xm.words,
+			       sizeof(battmgr->xm.words));
+		}
+	}
+
+	/* Retire this request; XM has no transaction ID for immediate same-key retry. */
+	WRITE_ONCE(battmgr->xm.active, false);
+	return ret;
+}
+
+static int qcom_battmgr_xm_get_value_locked(struct qcom_battmgr *battmgr,
+					    u32 property, u32 *value)
+{
+	return qcom_battmgr_xm_request_locked(battmgr, BATTMGR_XM_PROPERTY_GET,
+					      property, 0, NULL,
+					      QCOM_BATTMGR_XM_VALUE_RESPONSE,
+					      value, NULL);
+}
+
+static int __maybe_unused
+qcom_battmgr_xm_get_words_locked(struct qcom_battmgr *battmgr,
+				  u32 property, u32 words[4])
+{
+	const u32 empty_words[4] = {};
+
+	/* The vendor uses a zeroed 32 byte request to read authentication words. */
+	return qcom_battmgr_xm_request_locked(battmgr, BATTMGR_XM_PROPERTY_GET,
+					      property, 0, empty_words,
+					      QCOM_BATTMGR_XM_WORDS_RESPONSE,
+					      NULL, words);
+}
+
+/*
+ * M1 transport primitives deliberately have no sysfs/debugfs/userspace
+ * caller yet.  The later private authentication daemon must use only these
+ * typed operations; there is no arbitrary XM-property or PMIC write path.
+ * In particular, local software may clear pd_verifed on failure but cannot
+ * assert it: that value is the remote ADSP/adapter authentication outcome.
+ */
+static int __maybe_unused
+qcom_battmgr_xm_m1_set_value_locked(struct qcom_battmgr *battmgr,
+				     u32 property, u32 value)
+{
+	if ((property != XM_VERIFY_PROCESS && property != XM_VDM_VERIFIED &&
+	     property != XM_PD_VERIFIED) ||
+	    (property == XM_PD_VERIFIED && value))
+		return -EPERM;
+
+	return qcom_battmgr_xm_request_locked(battmgr, BATTMGR_XM_PROPERTY_SET,
+					      property, value, NULL,
+					      QCOM_BATTMGR_XM_VALUE_RESPONSE,
+					      NULL, NULL);
+}
+
+static int __maybe_unused
+qcom_battmgr_xm_m1_set_words_locked(struct qcom_battmgr *battmgr,
+				     u32 property, const u32 words[4])
+{
+	if (property != XM_VDM_SESSION_SEED && property != XM_VDM_AUTHENTICATION)
+		return -EPERM;
+
+	return qcom_battmgr_xm_request_locked(battmgr, BATTMGR_XM_PROPERTY_SET,
+					      property, 0, words,
+					      QCOM_BATTMGR_XM_VALUE_RESPONSE,
+					      NULL, NULL);
+}
+
+static int qcom_battmgr_raw_property(struct qcom_battmgr *battmgr,
+				     unsigned int opcode,
+				     unsigned int property,
+				     unsigned int *value)
+{
+	int ret;
+
+	if (!battmgr->service_up)
+		return -EAGAIN;
+
+	mutex_lock(&battmgr->lock);
+	battmgr->raw_valid = false;
+	if (opcode == BATTMGR_XM_PROPERTY_GET)
+		ret = qcom_battmgr_xm_get_value_locked(battmgr, property, value);
+	else
+		ret = qcom_battmgr_request_property(battmgr, opcode, property, 0);
+	if (!ret && opcode != BATTMGR_XM_PROPERTY_GET &&
+	    (!battmgr->raw_valid || battmgr->raw_opcode != opcode ||
+	     battmgr->raw_property != property))
+		ret = -ENODATA;
+	if (!ret && opcode != BATTMGR_XM_PROPERTY_GET)
+		*value = battmgr->raw_value;
+	mutex_unlock(&battmgr->lock);
+
+	return ret;
+}
+
+#define QCOM_BATTMGR_RAW_ATTR(_name, _opcode, _property) \
+static ssize_t _name##_show(struct device *dev, \
+			    struct device_attribute *attr, char *buf) \
+{ \
+	struct qcom_battmgr *battmgr = dev_get_drvdata(dev); \
+	unsigned int value; \
+	int ret; \
+	ret = qcom_battmgr_raw_property(battmgr, _opcode, _property, &value); \
+	if (ret) \
+		return ret; \
+	return sysfs_emit(buf, "%u\n", value); \
+} \
+static DEVICE_ATTR_RO(_name)
+
+QCOM_BATTMGR_RAW_ATTR(raw_usb_real_type, BATTMGR_USB_PROPERTY_GET, USB_REAL_TYPE);
+QCOM_BATTMGR_RAW_ATTR(raw_xm_authentic, BATTMGR_XM_PROPERTY_GET, XM_AUTHENTIC);
+QCOM_BATTMGR_RAW_ATTR(raw_xm_real_type, BATTMGR_XM_PROPERTY_GET, XM_REAL_TYPE);
+QCOM_BATTMGR_RAW_ATTR(raw_xm_verify_process, BATTMGR_XM_PROPERTY_GET, XM_VERIFY_PROCESS);
+QCOM_BATTMGR_RAW_ATTR(raw_xm_current_state, BATTMGR_XM_PROPERTY_GET, XM_CURRENT_STATE);
+QCOM_BATTMGR_RAW_ATTR(raw_xm_adapter_id, BATTMGR_XM_PROPERTY_GET, XM_ADAPTER_ID);
+QCOM_BATTMGR_RAW_ATTR(raw_xm_adapter_svid, BATTMGR_XM_PROPERTY_GET, XM_ADAPTER_SVID);
+QCOM_BATTMGR_RAW_ATTR(raw_xm_pd_verified, BATTMGR_XM_PROPERTY_GET, XM_PD_VERIFIED);
+QCOM_BATTMGR_RAW_ATTR(raw_xm_pdo2, BATTMGR_XM_PROPERTY_GET, XM_PDO2);
+QCOM_BATTMGR_RAW_ATTR(raw_xm_fastchg_mode, BATTMGR_XM_PROPERTY_GET, XM_FASTCHG_MODE);
+QCOM_BATTMGR_RAW_ATTR(raw_xm_quick_charge_type, BATTMGR_XM_PROPERTY_GET, XM_QUICK_CHARGE_TYPE);
+QCOM_BATTMGR_RAW_ATTR(raw_xm_apdo_max, BATTMGR_XM_PROPERTY_GET, XM_APDO_MAX);
+QCOM_BATTMGR_RAW_ATTR(raw_xm_power_max, BATTMGR_XM_PROPERTY_GET, XM_POWER_MAX);
+
+static struct attribute *qcom_battmgr_raw_attrs[] = {
+	&dev_attr_raw_usb_real_type.attr,
+	&dev_attr_raw_xm_authentic.attr,
+	&dev_attr_raw_xm_real_type.attr,
+	&dev_attr_raw_xm_verify_process.attr,
+	&dev_attr_raw_xm_current_state.attr,
+	&dev_attr_raw_xm_adapter_id.attr,
+	&dev_attr_raw_xm_adapter_svid.attr,
+	&dev_attr_raw_xm_pd_verified.attr,
+	&dev_attr_raw_xm_pdo2.attr,
+	&dev_attr_raw_xm_fastchg_mode.attr,
+	&dev_attr_raw_xm_quick_charge_type.attr,
+	&dev_attr_raw_xm_apdo_max.attr,
+	&dev_attr_raw_xm_power_max.attr,
+	NULL,
+};
+
+static const struct attribute_group qcom_battmgr_raw_group = {
+	.name = "sm8475_raw",
+	.attrs = qcom_battmgr_raw_attrs,
 };
 
 static int qcom_battmgr_request(struct qcom_battmgr *battmgr, void *data, size_t len)
@@ -421,6 +680,25 @@ static const u8 sm8350_bat_prop_map[] = {
 	[POWER_SUPPLY_PROP_POWER_NOW] = BATT_POWER_NOW,
 };
 
+static unsigned int qcom_battmgr_bat_fw_property(struct qcom_battmgr *battmgr,
+						 unsigned int property)
+{
+	/* SM8475 inserts constant-charge-current before temperature. */
+	if (battmgr->variant == QCOM_BATTMGR_SM8475 && property >= BATT_TEMP)
+		property++;
+
+	return property;
+}
+
+static unsigned int qcom_battmgr_bat_host_property(struct qcom_battmgr *battmgr,
+						   unsigned int property)
+{
+	if (battmgr->variant == QCOM_BATTMGR_SM8475 && property > BATT_TEMP)
+		property--;
+
+	return property;
+}
+
 static int qcom_battmgr_bat_sm8350_update(struct qcom_battmgr *battmgr,
 					  enum power_supply_property psp)
 {
@@ -431,6 +709,7 @@ static int qcom_battmgr_bat_sm8350_update(struct qcom_battmgr *battmgr,
 		return -EINVAL;
 
 	prop = sm8350_bat_prop_map[psp];
+	prop = qcom_battmgr_bat_fw_property(battmgr, prop);
 
 	mutex_lock(&battmgr->lock);
 	ret = qcom_battmgr_request_property(battmgr, BATTMGR_BAT_PROPERTY_GET, prop, 0);
@@ -529,6 +808,9 @@ static int qcom_battmgr_bat_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		val->intval = battmgr->status.current_now;
+		/* Xiaomi charger firmware uses positive current for discharge. */
+		if (battmgr->variant == QCOM_BATTMGR_SM8475)
+			val->intval = -val->intval;
 		break;
 	case POWER_SUPPLY_PROP_POWER_NOW:
 		val->intval = battmgr->status.power_now;
@@ -736,6 +1018,8 @@ static int qcom_battmgr_usb_sm8350_update(struct qcom_battmgr *battmgr,
 		return -EINVAL;
 
 	prop = sm8350_usb_prop_map[psp];
+	if (battmgr->variant == QCOM_BATTMGR_SM8475 && prop == USB_TYPE)
+		prop = USB_ADAP_TYPE;
 
 	mutex_lock(&battmgr->lock);
 	ret = qcom_battmgr_request_property(battmgr, BATTMGR_USB_PROPERTY_GET, prop, 0);
@@ -961,6 +1245,10 @@ static void qcom_battmgr_notification(struct qcom_battmgr *battmgr,
 	case NOTIF_WLS_PROPERTY:
 		power_supply_changed(battmgr->wls_psy);
 		break;
+	case NOTIF_XM_PROPERTY:
+		if (battmgr->variant == QCOM_BATTMGR_SM8475)
+			break;
+		fallthrough;
 	default:
 		dev_err(battmgr->dev, "unknown notification: %#x\n", notification);
 		break;
@@ -1121,7 +1409,7 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 	switch (opcode) {
 	case BATTMGR_BAT_PROPERTY_GET:
 		property = le32_to_cpu(resp->intval.property);
-		if (property == BATT_MODEL_NAME) {
+		if (property == qcom_battmgr_bat_fw_property(battmgr, BATT_MODEL_NAME)) {
 			if (payload_len != sizeof(resp->strval)) {
 				dev_warn(battmgr->dev,
 					 "invalid payload length for BATT_MODEL_NAME request: %zd\n",
@@ -1142,6 +1430,7 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 			if (battmgr->error)
 				goto out_complete;
 		}
+		property = qcom_battmgr_bat_host_property(battmgr, property);
 
 		switch (property) {
 		case BATT_STATUS:
@@ -1220,6 +1509,9 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 		battmgr->error = le32_to_cpu(resp->intval.result);
 		if (battmgr->error)
 			goto out_complete;
+		if (battmgr->variant == QCOM_BATTMGR_SM8475 &&
+		    property == USB_ADAP_TYPE)
+			property = USB_TYPE;
 
 		switch (property) {
 		case USB_ONLINE:
@@ -1242,6 +1534,12 @@ static void qcom_battmgr_sm8350_callback(struct qcom_battmgr *battmgr,
 			break;
 		case USB_TYPE:
 			battmgr->usb.usb_type = le32_to_cpu(resp->intval.value);
+			break;
+		case USB_REAL_TYPE:
+			battmgr->raw_opcode = opcode;
+			battmgr->raw_property = property;
+			battmgr->raw_value = le32_to_cpu(resp->intval.value);
+			battmgr->raw_valid = true;
 			break;
 		default:
 			dev_warn(battmgr->dev, "unknown property %#x\n", property);
@@ -1295,11 +1593,90 @@ out_complete:
 	complete(&battmgr->ack);
 }
 
+/*
+ * Return true when an XM request is in flight, whether or not @data is a
+ * valid reply.  In the invalid case it is intentionally not completed: a
+ * stale reply, an XM notification, or a frame for another property must time
+ * out rather than be attributed to the request currently holding @lock.
+ */
+static bool qcom_battmgr_xm_handle_response(struct qcom_battmgr *battmgr,
+					    const void *data, size_t len)
+{
+	const struct pmic_glink_hdr *hdr = data;
+	const struct qcom_battmgr_message *value_response = data;
+	const struct qcom_battmgr_xm_words_message *words_response = data;
+	u32 owner;
+	u32 type;
+	u32 opcode;
+	u32 property;
+	size_t expected_len;
+
+	if (len < sizeof(*hdr))
+		return true;
+
+	owner = le32_to_cpu(hdr->owner);
+	type = le32_to_cpu(hdr->type);
+	opcode = le32_to_cpu(hdr->opcode);
+	expected_len = battmgr->xm.response_kind ==
+		       QCOM_BATTMGR_XM_WORDS_RESPONSE ?
+		       sizeof(*words_response) :
+		       sizeof(value_response->hdr) + sizeof(value_response->intval);
+
+	if (owner != PMIC_GLINK_OWNER_BATTMGR || type != PMIC_GLINK_REQ_RESP ||
+	    opcode != battmgr->xm.opcode || len != expected_len)
+		return true;
+
+	property = le32_to_cpu(value_response->intval.property);
+	if (property != battmgr->xm.property)
+		return true;
+
+	if (battmgr->xm.response_kind == QCOM_BATTMGR_XM_VALUE_RESPONSE) {
+		/* The 24 byte property reply is the only format carrying ret_code. */
+		if (le32_to_cpu(value_response->intval.result))
+			battmgr->error = -EREMOTEIO;
+		else
+			battmgr->xm.value = le32_to_cpu(value_response->intval.value);
+	} else {
+		/* The exact 32 byte session/auth reply has no ret_code field. */
+		for (unsigned int i = 0; i < ARRAY_SIZE(battmgr->xm.words); i++)
+			battmgr->xm.words[i] = le32_to_cpu(words_response->words[i]);
+		battmgr->error = 0;
+	}
+
+	complete(&battmgr->ack);
+	return true;
+}
+
 static void qcom_battmgr_callback(const void *data, size_t len, void *priv)
 {
 	const struct pmic_glink_hdr *hdr = data;
 	struct qcom_battmgr *battmgr = priv;
-	unsigned int opcode = le32_to_cpu(hdr->opcode);
+	bool xm_active;
+	unsigned int opcode;
+
+	if (len < sizeof(*hdr)) {
+		dev_warn(battmgr->dev, "short PMIC GLINK frame: %zu\n", len);
+		return;
+	}
+
+	opcode = le32_to_cpu(hdr->opcode);
+	xm_active = smp_load_acquire(&battmgr->xm.active); /* pairs with request publish */
+
+	/* Do this before the generic callback, whose old completion is broad. */
+	if (xm_active) {
+		if (opcode == BATTMGR_NOTIFICATION)
+			qcom_battmgr_notification(battmgr, data, len);
+		else
+			qcom_battmgr_xm_handle_response(battmgr, data, len);
+		return;
+	}
+
+	/* XM must never reach the generic, broad completion path. */
+	if (opcode == BATTMGR_XM_PROPERTY_GET || opcode == BATTMGR_XM_PROPERTY_SET) {
+		dev_warn_ratelimited(battmgr->dev,
+				     "unsolicited XM response %#x ignored\n", opcode);
+		return;
+	}
 
 	if (opcode == BATTMGR_NOTIFICATION)
 		qcom_battmgr_notification(battmgr, data, len);
@@ -1337,6 +1714,7 @@ static void qcom_battmgr_pdr_notify(void *priv, int state)
 }
 
 static const struct of_device_id qcom_battmgr_of_variants[] = {
+	{ .compatible = "qcom,sm8475-pmic-glink", .data = (void *)QCOM_BATTMGR_SM8475 },
 	{ .compatible = "qcom,sc8180x-pmic-glink", .data = (void *)QCOM_BATTMGR_SC8280XP },
 	{ .compatible = "qcom,sc8280xp-pmic-glink", .data = (void *)QCOM_BATTMGR_SC8280XP },
 	{ .compatible = "qcom,x1e80100-pmic-glink", .data = (void *)QCOM_BATTMGR_SC8280XP },
@@ -1360,6 +1738,7 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
 		return -ENOMEM;
 
 	battmgr->dev = dev;
+	dev_set_drvdata(dev, battmgr);
 
 	psy_cfg.drv_data = battmgr;
 	psy_cfg.fwnode = dev_fwnode(&adev->dev);
@@ -1424,6 +1803,9 @@ static int qcom_battmgr_probe(struct auxiliary_device *adev,
 		return PTR_ERR(battmgr->client);
 
 	pmic_glink_client_register(battmgr->client);
+
+	if (battmgr->variant == QCOM_BATTMGR_SM8475)
+		return devm_device_add_group(dev, &qcom_battmgr_raw_group);
 
 	return 0;
 }

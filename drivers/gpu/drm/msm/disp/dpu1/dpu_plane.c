@@ -893,7 +893,10 @@ static int dpu_plane_atomic_check_nosspp(struct drm_plane *plane,
 	 * rectangle left/right clipping first, then check wide rectangle
 	 * splitting in every half next.
 	 */
-	num_stages = (num_lm + 1) / 2;
+	if (dpu_use_virtual_planes)
+		num_stages = (num_lm + 1) / 2;
+	else
+		num_stages = 1;
 	/* iterate mixer configs for this plane, to separate left/right with the id */
 	for (stage_id = 0; stage_id < num_stages; stage_id++) {
 		struct drm_rect mixer_rect = {

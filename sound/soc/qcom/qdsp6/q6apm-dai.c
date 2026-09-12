@@ -247,8 +247,10 @@ static int q6apm_dai_prepare(struct snd_soc_component *component,
 	}
 
 	ret = q6apm_graph_media_format_pcm(prtd->graph, &cfg);
-	if (ret < 0)
+	if (ret < 0) {
 		dev_err(dev, "%s: CMD Format block failed\n", __func__);
+		return ret;
+	}
 
 	ret = q6apm_map_memory_regions(prtd->graph, substream->stream, prtd->phys,
 				       (prtd->pcm_size / prtd->periods), prtd->periods);
@@ -278,7 +280,7 @@ static int q6apm_dai_prepare(struct snd_soc_component *component,
 
 	}
 
-	/* Now that graph as been prepared and started update the internal state accordingly */
+	/* The DSP graph is running: allow the client's initial buffer prefill. */
 	prtd->state = Q6APM_STREAM_RUNNING;
 
 	return 0;
@@ -291,6 +293,9 @@ static int q6apm_dai_ack(struct snd_soc_component *component, struct snd_pcm_sub
 	int i, ret = 0, avail_periods;
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		if (prtd->state != Q6APM_STREAM_RUNNING)
+			return 0;
+
 		avail_periods = (runtime->control->appl_ptr - prtd->queue_ptr)/runtime->period_size;
 		for (i = 0; i < avail_periods; i++) {
 			ret = q6apm_write_async(prtd->graph, prtd->pcm_count, 0, 0, NO_TIMESTAMP);
@@ -316,6 +321,7 @@ static int q6apm_dai_trigger(struct snd_soc_component *component,
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+		prtd->state = Q6APM_STREAM_RUNNING;
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
 		/* TODO support be handled via SoftPause Module */

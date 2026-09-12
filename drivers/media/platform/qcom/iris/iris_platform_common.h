@@ -36,6 +36,7 @@ enum pipe_type {
 
 extern struct iris_platform_data qcs8300_data;
 extern struct iris_platform_data sm8250_data;
+extern struct iris_platform_data sm8450_data;
 extern struct iris_platform_data sm8550_data;
 extern struct iris_platform_data sm8650_data;
 
@@ -174,6 +175,7 @@ struct iris_platform_data {
 	struct tz_cp_config *tz_cp_config_data;
 	u32 core_arch;
 	u32 hw_response_timeout;
+	bool resume_without_payload;
 	struct ubwc_config_data *ubwc_config;
 	u32 num_vpp_pipe;
 	u32 max_session_count;

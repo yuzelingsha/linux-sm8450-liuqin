@@ -892,6 +892,7 @@ static int cs_dsp_coeff_read_ctrl_raw(struct cs_dsp_coeff_ctl *ctl,
 	return 0;
 }
 
+
 /**
  * cs_dsp_coeff_read_ctrl() - Reads the given coefficient control into the given buffer
  * @ctl: pointer to coefficient control
@@ -2881,6 +2882,7 @@ err:
 		dsp->ops->stop_core(dsp);
 	if (dsp->ops->disable_core)
 		dsp->ops->disable_core(dsp);
+	dsp->running = false;
 	mutex_unlock(&dsp->pwr_lock);
 
 	return ret;

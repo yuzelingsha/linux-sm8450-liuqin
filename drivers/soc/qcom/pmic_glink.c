@@ -210,7 +210,14 @@ static void pmic_glink_state_notify_clients(struct pmic_glink *pg)
 	unsigned long flags;
 
 	if (pg->client_state != SERVREG_SERVICE_STATE_UP) {
-		if (pg->pdr_state == SERVREG_SERVICE_STATE_UP && pg->ept)
+		/*
+		 * Some firmware exposes the RPMsg service without publishing the
+		 * charger protection-domain state. The endpoint is sufficient to
+		 * communicate in that case, matching the downstream transport.
+		 * An explicit PDR down event still wins in the branch below.
+		 */
+		if (pg->ept && (pg->pdr_state == SERVREG_SERVICE_STATE_UP ||
+				!pg->pdr_state))
 			new_state = SERVREG_SERVICE_STATE_UP;
 	} else {
 		if (pg->pdr_state == SERVREG_SERVICE_STATE_DOWN || !pg->ept)

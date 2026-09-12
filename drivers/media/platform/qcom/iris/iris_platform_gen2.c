@@ -211,6 +211,19 @@ static struct platform_inst_caps platform_inst_cap_sm8550 = {
 	.num_comv = 0,
 };
 
+/* Waipio/Iris2 capabilities from the released Qualcomm SM8450 driver. */
+static struct platform_inst_caps platform_inst_cap_sm8450 = {
+	.min_frame_width = 96,
+	.max_frame_width = 8192,
+	.min_frame_height = 96,
+	.max_frame_height = 8192,
+	.max_mbpf = ((8192 * 4320) / 256) * 2,
+	.mb_cycles_vpp = 200,
+	.mb_cycles_fw = 326389,
+	.mb_cycles_fw_vpp = 44156,
+	.num_comv = 0,
+};
+
 static void iris_set_sm8550_preset_registers(struct iris_core *core)
 {
 	writel(0x0, core->reg_base + 0xB0088);
@@ -222,6 +235,7 @@ static const struct icc_info sm8550_icc_table[] = {
 };
 
 static const char * const sm8550_clk_reset_table[] = { "bus" };
+static const char * const sm8450_clk_reset_table[] = { "bus", "core" };
 
 static const struct bw_info sm8550_bw_table_dec[] = {
 	{ ((4096 * 2160) / 256) * 60, 1608000 },
@@ -320,6 +334,72 @@ static const u32 sm8550_dec_ip_int_buf_tbl[] = {
 
 static const u32 sm8550_dec_op_int_buf_tbl[] = {
 	BUF_DPB,
+};
+
+/*
+ * SM8450 is the first Iris2 generation.  Its HFI packet protocol, register
+ * layout, UBWC geometry and resource names match the VPU3 path used by
+ * SM8550; the signed firmware and conservative capability clocks differ.
+ */
+struct iris_platform_data sm8450_data = {
+	.get_instance = iris_hfi_gen2_get_instance,
+	.init_hfi_command_ops = iris_hfi_gen2_command_ops_init,
+	.init_hfi_response_ops = iris_hfi_gen2_response_ops_init,
+	.vpu_ops = &iris_vpu3_ops,
+	.set_preset_registers = iris_set_sm8550_preset_registers,
+	.icc_tbl = sm8550_icc_table,
+	.icc_tbl_size = ARRAY_SIZE(sm8550_icc_table),
+	.clk_rst_tbl = sm8450_clk_reset_table,
+	.clk_rst_tbl_size = ARRAY_SIZE(sm8450_clk_reset_table),
+	.bw_tbl_dec = sm8550_bw_table_dec,
+	.bw_tbl_dec_size = ARRAY_SIZE(sm8550_bw_table_dec),
+	.pmdomain_tbl = sm8550_pmdomain_table,
+	.pmdomain_tbl_size = ARRAY_SIZE(sm8550_pmdomain_table),
+	.opp_pd_tbl = sm8550_opp_pd_table,
+	.opp_pd_tbl_size = ARRAY_SIZE(sm8550_opp_pd_table),
+	.clk_tbl = sm8550_clk_table,
+	.clk_tbl_size = ARRAY_SIZE(sm8550_clk_table),
+	.dma_mask = 0xe0000000 - 1,
+	.fwname = "qcom/vpu/vpu20_4v.mbn",
+	.pas_id = IRIS_PAS_ID,
+	.inst_caps = &platform_inst_cap_sm8450,
+	.inst_fw_caps = inst_fw_cap_sm8550,
+	.inst_fw_caps_size = ARRAY_SIZE(inst_fw_cap_sm8550),
+	.tz_cp_config_data = &tz_cp_config_sm8550,
+	.core_arch = VIDEO_ARCH_LX,
+	.hw_response_timeout = HW_RESPONSE_TIMEOUT_VALUE,
+	/* Iris2 firmware predates the RESUME reason payload. */
+	.resume_without_payload = true,
+	.ubwc_config = &ubwc_config_sm8550,
+	.num_vpp_pipe = 4,
+	.max_session_count = 16,
+	.max_core_mbpf = ((8192 * 4320) / 256) * 2,
+	.input_config_params_default = sm8550_vdec_input_config_params_default,
+	.input_config_params_default_size =
+		ARRAY_SIZE(sm8550_vdec_input_config_params_default),
+	.input_config_params_hevc = sm8550_vdec_input_config_param_hevc,
+	.input_config_params_hevc_size =
+		ARRAY_SIZE(sm8550_vdec_input_config_param_hevc),
+	.input_config_params_vp9 = sm8550_vdec_input_config_param_vp9,
+	.input_config_params_vp9_size =
+		ARRAY_SIZE(sm8550_vdec_input_config_param_vp9),
+	.output_config_params = sm8550_vdec_output_config_params,
+	.output_config_params_size = ARRAY_SIZE(sm8550_vdec_output_config_params),
+	.dec_input_prop = sm8550_vdec_subscribe_input_properties,
+	.dec_input_prop_size = ARRAY_SIZE(sm8550_vdec_subscribe_input_properties),
+	.dec_output_prop_avc = sm8550_vdec_subscribe_output_properties_avc,
+	.dec_output_prop_avc_size =
+		ARRAY_SIZE(sm8550_vdec_subscribe_output_properties_avc),
+	.dec_output_prop_hevc = sm8550_vdec_subscribe_output_properties_hevc,
+	.dec_output_prop_hevc_size =
+		ARRAY_SIZE(sm8550_vdec_subscribe_output_properties_hevc),
+	.dec_output_prop_vp9 = sm8550_vdec_subscribe_output_properties_vp9,
+	.dec_output_prop_vp9_size =
+		ARRAY_SIZE(sm8550_vdec_subscribe_output_properties_vp9),
+	.dec_ip_int_buf_tbl = sm8550_dec_ip_int_buf_tbl,
+	.dec_ip_int_buf_tbl_size = ARRAY_SIZE(sm8550_dec_ip_int_buf_tbl),
+	.dec_op_int_buf_tbl = sm8550_dec_op_int_buf_tbl,
+	.dec_op_int_buf_tbl_size = ARRAY_SIZE(sm8550_dec_op_int_buf_tbl),
 };
 
 struct iris_platform_data sm8550_data = {
