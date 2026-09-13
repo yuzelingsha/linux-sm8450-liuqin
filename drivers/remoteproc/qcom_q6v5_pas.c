@@ -718,7 +718,7 @@ static int qcom_pas_probe(struct platform_device *pdev)
 	}
 
 	rproc->auto_boot = desc->auto_boot;
-	if (desc->ssr_name && !strcmp(desc->ssr_name, "slpi"))
+	if (desc->sysmon_name && !strcmp(desc->sysmon_name, "slpi"))
 		rproc->auto_boot = rproc->auto_boot && slpi_auto_boot;
 	rproc_coredump_set_elf_info(rproc, ELFCLASS32, EM_NONE);
 
