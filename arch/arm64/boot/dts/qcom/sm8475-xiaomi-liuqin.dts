@@ -478,6 +478,27 @@
 		pinctrl-0 = <&kb_vdd_default>;
 		pinctrl-names = "default";
 	};
+
+	camera_wide_avdd_ldo: regulator-camera-wide-avdd {
+		compatible = "regulator-fixed";
+		regulator-name = "camera_wide_avdd_ldo";
+		regulator-min-microvolt = <2800000>;
+		regulator-max-microvolt = <2800000>;
+		vin-supply = <&pm8350c_bob>;
+		gpio = <&tlmm 52 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <100>;
+	};
+
+	camera_wide_dvdd_ldo: regulator-camera-wide-dvdd {
+		compatible = "regulator-fixed";
+		regulator-name = "camera_wide_dvdd_ldo";
+		regulator-min-microvolt = <1100000>;
+		regulator-max-microvolt = <1100000>;
+		gpio = <&tlmm 85 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		startup-delay-us = <100>;
+	};
 };
 
 &apps_rsc {
@@ -570,6 +591,13 @@
 		 * phandle 0x301), which qcom,dsi-display-primary names as
 		 * iovdd-supply at :32975.
 		 */
+		pm8350c_l1: ldo1 {
+			regulator-name = "pm8350c_l1";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <1800000>;
+			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
+		};
+
 		pm8350c_l2: ldo2 {
 			regulator-name = "pm8350c_l2";
 			regulator-min-microvolt = <1800000>;
@@ -1333,6 +1361,35 @@
 	gpio-reserved-ranges = <28 4>, <36 4>;
 	status = "okay";
 
+	cam_sensor_mclk2_active: cam-sensor-mclk2-active-state {
+		pins = "gpio102";
+		function = "cam_mclk";
+		drive-strength = <4>;
+		bias-disable;
+	};
+
+	cam_sensor_mclk2_suspend: cam-sensor-mclk2-suspend-state {
+		pins = "gpio102";
+		function = "cam_mclk";
+		drive-strength = <4>;
+		bias-pull-down;
+	};
+
+	cam_sensor_active_rst0: cam-sensor-active-rst0-state {
+		pins = "gpio126";
+		function = "gpio";
+		drive-strength = <4>;
+		bias-disable;
+	};
+
+	cam_sensor_suspend_rst0: cam-sensor-suspend-rst0-state {
+		pins = "gpio126";
+		function = "gpio";
+		drive-strength = <4>;
+		bias-pull-down;
+		output-low;
+	};
+
 	/* Type-C CC orientation line into the QMP lane-swap decision. */
 	usb3_orient_default: usb3-orient-state {
 		pins = "gpio91";
@@ -1683,4 +1740,163 @@
 
 &usb_1_qmpphy_out {
 	remote-endpoint = <&pmic_glink_ss_in>;
+};
+
+/* Camera control path: enable SM8475 CAMCC and both CCI controllers. */
+&camcc {
+	compatible = "qcom,sm8475-camcc";
+	power-domains = <&rpmhpd RPMHPD_MMCX>,
+			<&rpmhpd RPMHPD_MXC>;
+	required-opps = <&rpmhpd_opp_low_svs>,
+			<&rpmhpd_opp_low_svs>;
+	status = "okay";
+};
+
+&cci0 {
+	assigned-clocks = <&camcc CAM_CC_CAMNOC_AXI_CLK>,
+			  <&camcc CAM_CC_CCI_0_CLK>;
+	assigned-clock-rates = <300000000>, <37500000>;
+	status = "okay";
+};
+
+&cci1 {
+	assigned-clocks = <&camcc CAM_CC_CAMNOC_AXI_CLK>,
+			  <&camcc CAM_CC_CCI_1_CLK>;
+	assigned-clock-rates = <300000000>, <37500000>;
+	status = "okay";
+};
+&cci0_i2c1 {
+	status = "okay";
+
+	camera@10 {
+		compatible = "samsung,s5kjn1";
+		reg = <0x10>;
+		orientation = <1>;
+		rotation = <180>;
+
+		/* Vendor cam_clk-supply resolves to CAMCC TITAN_TOP_GDSC. */
+		power-domains = <&camcc TITAN_TOP_GDSC>;
+
+		clocks = <&camcc CAM_CC_MCLK2_CLK>;
+		assigned-clocks = <&camcc CAM_CC_MCLK2_CLK>;
+		assigned-clock-rates = <19200000>;
+
+		reset-gpios = <&tlmm 126 GPIO_ACTIVE_LOW>;
+		vdda-supply = <&camera_wide_avdd_ldo>;
+		vddd-supply = <&camera_wide_dvdd_ldo>;
+		vddio-supply = <&pm8350c_l1>;
+
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&cam_sensor_mclk2_active &cam_sensor_active_rst0>;
+		pinctrl-1 = <&cam_sensor_mclk2_suspend &cam_sensor_suspend_rst0>;
+		status = "okay";
+
+		port {
+			s5kjn1_ep: endpoint {
+				link-frequencies = /bits/ 64 <700000000>;
+				clock-lanes = <0>;
+				data-lanes = <1 2 3 4>;
+				remote-endpoint = <&camss_port3_ep>;
+			};
+		};
+	};
+};
+
+/*
+ * SM8475/Cape CAMSS path for the rear S5KJN1.
+ * Runtime resources are derived from Qualcomm Cape/waipio camera DT.
+ */
+&soc {
+	camss: isp@ac62000 {
+		compatible = "qcom,sm8450-camss";
+
+		reg = <0x0 0x0ac62000 0x0 0xf000>,
+		      <0x0 0x0acb7000 0x0 0x0d00>,
+		      <0x0 0x0acb6000 0x0 0x1000>,
+		      <0x0 0x0ace4000 0x0 0x2000>,
+		      <0x0 0x0ace6000 0x0 0x2000>,
+		      <0x0 0x0ace8000 0x0 0x2000>,
+		      <0x0 0x0acea000 0x0 0x2000>;
+		reg-names = "vfe0", "csid0", "csid_wrapper",
+			    "csiphy0", "csiphy1", "csiphy2", "csiphy3";
+
+		clocks = <&camcc CAM_CC_CAMNOC_AXI_CLK>,
+			 <&camcc CAM_CC_CPAS_AHB_CLK>,
+			 <&camcc CAM_CC_CPAS_FAST_AHB_CLK>,
+			 <&camcc CAM_CC_CPAS_IFE_0_CLK>,
+			 <&camcc CAM_CC_CSID_CLK>,
+			 <&camcc CAM_CC_CSIPHY0_CLK>,
+			 <&camcc CAM_CC_CSI0PHYTIMER_CLK>,
+			 <&camcc CAM_CC_CSIPHY1_CLK>,
+			 <&camcc CAM_CC_CSI1PHYTIMER_CLK>,
+			 <&camcc CAM_CC_CSIPHY2_CLK>,
+			 <&camcc CAM_CC_CSI2PHYTIMER_CLK>,
+			 <&camcc CAM_CC_CSIPHY3_CLK>,
+			 <&camcc CAM_CC_CSI3PHYTIMER_CLK>,
+			 <&camcc CAM_CC_CSID_CSIPHY_RX_CLK>,
+			 <&gcc GCC_CAMERA_HF_AXI_CLK>,
+			 <&camcc CAM_CC_IFE_0_CLK>,
+			 <&camcc CAM_CC_IFE_0_FAST_AHB_CLK>;
+		clock-names = "camnoc_axi",
+			      "cpas_ahb",
+			      "cpas_fast_ahb_clk",
+			      "cpas_vfe0",
+			      "csid",
+			      "csiphy0",
+			      "csiphy0_timer",
+			      "csiphy1",
+			      "csiphy1_timer",
+			      "csiphy2",
+			      "csiphy2_timer",
+			      "csiphy3",
+			      "csiphy3_timer",
+			      "csiphy_rx",
+			      "gcc_axi_hf",
+			      "vfe0",
+			      "vfe0_fast_ahb";
+
+		interrupts = <GIC_SPI 465 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 464 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 477 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 478 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 479 IRQ_TYPE_EDGE_RISING>,
+			     <GIC_SPI 448 IRQ_TYPE_EDGE_RISING>;
+		interrupt-names = "vfe0", "csid0",
+				  "csiphy0", "csiphy1", "csiphy2", "csiphy3";
+
+		vdda-phy-supply = <&pm8350_l5>;
+		vdda-pll-supply = <&pm8350c_l10>;
+
+		interconnects = <&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ACTIVE_ONLY
+				 &config_noc SLAVE_CAMERA_CFG QCOM_ICC_TAG_ACTIVE_ONLY>,
+				<&mmss_noc MASTER_CAMNOC_HF QCOM_ICC_TAG_ALWAYS
+				 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>;
+		interconnect-names = "ahb", "hf_0_mnoc";
+
+		iommus = <&apps_smmu 0x800 0x460>;
+
+		power-domains = <&camcc IFE_0_GDSC>,
+				<&camcc TITAN_TOP_GDSC>;
+		power-domain-names = "ife0", "top";
+
+		#address-cells = <1>;
+		#size-cells = <0>;
+		status = "okay";
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			port@3 {
+				reg = <3>;
+
+				camss_port3_ep: endpoint {
+					link-frequencies = /bits/ 64 <700000000>;
+					clock-lanes = <7>;
+					data-lanes = <0 1 2 3>;
+					remote-endpoint = <&s5kjn1_ep>;
+				};
+			};
+		};
+	};
 };
