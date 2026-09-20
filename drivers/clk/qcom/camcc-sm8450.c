@@ -846,19 +846,21 @@ static const struct freq_tbl ftbl_cam_cc_camnoc_axi_clk_src[] = {
 	{ }
 };
 
+static struct clk_init_data cam_cc_camnoc_axi_clk_src_init = {
+	.name = "cam_cc_camnoc_axi_clk_src",
+	.parent_data = cam_cc_parent_data_0,
+	.num_parents = ARRAY_SIZE(cam_cc_parent_data_0),
+	.flags = CLK_SET_RATE_PARENT,
+	.ops = &clk_rcg2_ops,
+};
+
 static struct clk_rcg2 cam_cc_camnoc_axi_clk_src = {
 	.cmd_rcgr = 0x13194,
 	.mnd_width = 0,
 	.hid_width = 5,
 	.parent_map = cam_cc_parent_map_0,
 	.freq_tbl = ftbl_cam_cc_camnoc_axi_clk_src,
-	.clkr.hw.init = &(const struct clk_init_data) {
-		.name = "cam_cc_camnoc_axi_clk_src",
-		.parent_data = cam_cc_parent_data_0,
-		.num_parents = ARRAY_SIZE(cam_cc_parent_data_0),
-		.flags = CLK_SET_RATE_PARENT,
-		.ops = &clk_rcg2_ops,
-	},
+	.clkr.hw.init = &cam_cc_camnoc_axi_clk_src_init,
 };
 
 static const struct freq_tbl ftbl_cam_cc_cci_0_clk_src[] = {
@@ -867,19 +869,29 @@ static const struct freq_tbl ftbl_cam_cc_cci_0_clk_src[] = {
 	{ }
 };
 
+static struct clk_init_data cam_cc_cci_0_clk_src_init = {
+	.name = "cam_cc_cci_0_clk_src",
+	.parent_data = cam_cc_parent_data_0,
+	.num_parents = ARRAY_SIZE(cam_cc_parent_data_0),
+	.flags = CLK_SET_RATE_PARENT,
+	.ops = &clk_rcg2_ops,
+};
+
 static struct clk_rcg2 cam_cc_cci_0_clk_src = {
 	.cmd_rcgr = 0x1312c,
 	.mnd_width = 8,
 	.hid_width = 5,
 	.parent_map = cam_cc_parent_map_0,
 	.freq_tbl = ftbl_cam_cc_cci_0_clk_src,
-	.clkr.hw.init = &(const struct clk_init_data) {
-		.name = "cam_cc_cci_0_clk_src",
-		.parent_data = cam_cc_parent_data_0,
-		.num_parents = ARRAY_SIZE(cam_cc_parent_data_0),
-		.flags = CLK_SET_RATE_PARENT,
-		.ops = &clk_rcg2_ops,
-	},
+	.clkr.hw.init = &cam_cc_cci_0_clk_src_init,
+};
+
+static struct clk_init_data cam_cc_cci_1_clk_src_init = {
+	.name = "cam_cc_cci_1_clk_src",
+	.parent_data = cam_cc_parent_data_0,
+	.num_parents = ARRAY_SIZE(cam_cc_parent_data_0),
+	.flags = CLK_SET_RATE_PARENT,
+	.ops = &clk_rcg2_ops,
 };
 
 static struct clk_rcg2 cam_cc_cci_1_clk_src = {
@@ -888,13 +900,7 @@ static struct clk_rcg2 cam_cc_cci_1_clk_src = {
 	.hid_width = 5,
 	.parent_map = cam_cc_parent_map_0,
 	.freq_tbl = ftbl_cam_cc_cci_0_clk_src,
-	.clkr.hw.init = &(const struct clk_init_data) {
-		.name = "cam_cc_cci_1_clk_src",
-		.parent_data = cam_cc_parent_data_0,
-		.num_parents = ARRAY_SIZE(cam_cc_parent_data_0),
-		.flags = CLK_SET_RATE_PARENT,
-		.ops = &clk_rcg2_ops,
-	},
+	.clkr.hw.init = &cam_cc_cci_1_clk_src_init,
 };
 
 static const struct freq_tbl ftbl_cam_cc_cphy_rx_clk_src[] = {
@@ -904,19 +910,21 @@ static const struct freq_tbl ftbl_cam_cc_cphy_rx_clk_src[] = {
 	{ }
 };
 
+static struct clk_init_data cam_cc_cphy_rx_clk_src_init = {
+	.name = "cam_cc_cphy_rx_clk_src",
+	.parent_data = cam_cc_parent_data_0,
+	.num_parents = ARRAY_SIZE(cam_cc_parent_data_0),
+	.flags = CLK_SET_RATE_PARENT,
+	.ops = &clk_rcg2_ops,
+};
+
 static struct clk_rcg2 cam_cc_cphy_rx_clk_src = {
 	.cmd_rcgr = 0x1104c,
 	.mnd_width = 0,
 	.hid_width = 5,
 	.parent_map = cam_cc_parent_map_0,
 	.freq_tbl = ftbl_cam_cc_cphy_rx_clk_src,
-	.clkr.hw.init = &(const struct clk_init_data) {
-		.name = "cam_cc_cphy_rx_clk_src",
-		.parent_data = cam_cc_parent_data_0,
-		.num_parents = ARRAY_SIZE(cam_cc_parent_data_0),
-		.flags = CLK_SET_RATE_PARENT,
-		.ops = &clk_rcg2_ops,
-	},
+	.clkr.hw.init = &cam_cc_cphy_rx_clk_src_init,
 };
 
 static const struct freq_tbl ftbl_cam_cc_csi0phytimer_clk_src[] = {
@@ -970,19 +978,21 @@ static struct clk_rcg2 cam_cc_csi2phytimer_clk_src = {
 	},
 };
 
+static struct clk_init_data cam_cc_csi3phytimer_clk_src_init = {
+	.name = "cam_cc_csi3phytimer_clk_src",
+	.parent_data = cam_cc_parent_data_0,
+	.num_parents = ARRAY_SIZE(cam_cc_parent_data_0),
+	.flags = CLK_SET_RATE_PARENT,
+	.ops = &clk_rcg2_ops,
+};
+
 static struct clk_rcg2 cam_cc_csi3phytimer_clk_src = {
 	.cmd_rcgr = 0x1514c,
 	.mnd_width = 0,
 	.hid_width = 5,
 	.parent_map = cam_cc_parent_map_0,
 	.freq_tbl = ftbl_cam_cc_csi0phytimer_clk_src,
-	.clkr.hw.init = &(const struct clk_init_data) {
-		.name = "cam_cc_csi3phytimer_clk_src",
-		.parent_data = cam_cc_parent_data_0,
-		.num_parents = ARRAY_SIZE(cam_cc_parent_data_0),
-		.flags = CLK_SET_RATE_PARENT,
-		.ops = &clk_rcg2_ops,
-	},
+	.clkr.hw.init = &cam_cc_csi3phytimer_clk_src_init,
 };
 
 static struct clk_rcg2 cam_cc_csi4phytimer_clk_src = {
@@ -1021,19 +1031,21 @@ static const struct freq_tbl ftbl_cam_cc_csid_clk_src[] = {
 	{ }
 };
 
+static struct clk_init_data cam_cc_csid_clk_src_init = {
+	.name = "cam_cc_csid_clk_src",
+	.parent_data = cam_cc_parent_data_0,
+	.num_parents = ARRAY_SIZE(cam_cc_parent_data_0),
+	.flags = CLK_SET_RATE_PARENT,
+	.ops = &clk_rcg2_ops,
+};
+
 static struct clk_rcg2 cam_cc_csid_clk_src = {
 	.cmd_rcgr = 0x13174,
 	.mnd_width = 0,
 	.hid_width = 5,
 	.parent_map = cam_cc_parent_map_0,
 	.freq_tbl = ftbl_cam_cc_csid_clk_src,
-	.clkr.hw.init = &(const struct clk_init_data) {
-		.name = "cam_cc_csid_clk_src",
-		.parent_data = cam_cc_parent_data_0,
-		.num_parents = ARRAY_SIZE(cam_cc_parent_data_0),
-		.flags = CLK_SET_RATE_PARENT,
-		.ops = &clk_rcg2_ops,
-	},
+	.clkr.hw.init = &cam_cc_csid_clk_src_init,
 };
 
 static const struct freq_tbl ftbl_cam_cc_fast_ahb_clk_src[] = {
@@ -1045,19 +1057,21 @@ static const struct freq_tbl ftbl_cam_cc_fast_ahb_clk_src[] = {
 	{ }
 };
 
+static struct clk_init_data cam_cc_fast_ahb_clk_src_init = {
+	.name = "cam_cc_fast_ahb_clk_src",
+	.parent_data = cam_cc_parent_data_0,
+	.num_parents = ARRAY_SIZE(cam_cc_parent_data_0),
+	.flags = CLK_SET_RATE_PARENT,
+	.ops = &clk_rcg2_ops,
+};
+
 static struct clk_rcg2 cam_cc_fast_ahb_clk_src = {
 	.cmd_rcgr = 0x10018,
 	.mnd_width = 0,
 	.hid_width = 5,
 	.parent_map = cam_cc_parent_map_0,
 	.freq_tbl = ftbl_cam_cc_fast_ahb_clk_src,
-	.clkr.hw.init = &(const struct clk_init_data) {
-		.name = "cam_cc_fast_ahb_clk_src",
-		.parent_data = cam_cc_parent_data_0,
-		.num_parents = ARRAY_SIZE(cam_cc_parent_data_0),
-		.flags = CLK_SET_RATE_PARENT,
-		.ops = &clk_rcg2_ops,
-	},
+	.clkr.hw.init = &cam_cc_fast_ahb_clk_src_init,
 };
 
 static const struct freq_tbl ftbl_cam_cc_icp_clk_src[] = {
@@ -1092,19 +1106,21 @@ static const struct freq_tbl ftbl_cam_cc_ife_0_clk_src[] = {
 	{ }
 };
 
+static struct clk_init_data cam_cc_ife_0_clk_src_init = {
+	.name = "cam_cc_ife_0_clk_src",
+	.parent_data = cam_cc_parent_data_2,
+	.num_parents = ARRAY_SIZE(cam_cc_parent_data_2),
+	.flags = CLK_SET_RATE_PARENT,
+	.ops = &clk_rcg2_ops,
+};
+
 static struct clk_rcg2 cam_cc_ife_0_clk_src = {
 	.cmd_rcgr = 0x11018,
 	.mnd_width = 0,
 	.hid_width = 5,
 	.parent_map = cam_cc_parent_map_2,
 	.freq_tbl = ftbl_cam_cc_ife_0_clk_src,
-	.clkr.hw.init = &(const struct clk_init_data) {
-		.name = "cam_cc_ife_0_clk_src",
-		.parent_data = cam_cc_parent_data_2,
-		.num_parents = ARRAY_SIZE(cam_cc_parent_data_2),
-		.flags = CLK_SET_RATE_PARENT,
-		.ops = &clk_rcg2_ops,
-	},
+	.clkr.hw.init = &cam_cc_ife_0_clk_src_init,
 };
 
 static const struct freq_tbl ftbl_cam_cc_ife_1_clk_src[] = {
@@ -1265,19 +1281,21 @@ static struct clk_rcg2 cam_cc_mclk1_clk_src = {
 	},
 };
 
+static struct clk_init_data cam_cc_mclk2_clk_src_init = {
+	.name = "cam_cc_mclk2_clk_src",
+	.parent_data = cam_cc_parent_data_1,
+	.num_parents = ARRAY_SIZE(cam_cc_parent_data_1),
+	.flags = CLK_SET_RATE_PARENT,
+	.ops = &clk_rcg2_ops,
+};
+
 static struct clk_rcg2 cam_cc_mclk2_clk_src = {
 	.cmd_rcgr = 0x15038,
 	.mnd_width = 8,
 	.hid_width = 5,
 	.parent_map = cam_cc_parent_map_1,
 	.freq_tbl = ftbl_cam_cc_mclk0_clk_src,
-	.clkr.hw.init = &(const struct clk_init_data) {
-		.name = "cam_cc_mclk2_clk_src",
-		.parent_data = cam_cc_parent_data_1,
-		.num_parents = ARRAY_SIZE(cam_cc_parent_data_1),
-		.flags = CLK_SET_RATE_PARENT,
-		.ops = &clk_rcg2_ops,
-	},
+	.clkr.hw.init = &cam_cc_mclk2_clk_src_init,
 };
 
 static struct clk_rcg2 cam_cc_mclk3_clk_src = {
@@ -3015,6 +3033,32 @@ static struct gdsc titan_top_gdsc = {
 	.pwrsts = PWRSTS_OFF_ON,
 };
 
+/*
+ * SM8475/cape downstream describes TITAN_TOP as a qcom,gdsc regulator
+ * backed by the GDSCR PWR_ON bit and qcom,retain-regs.  Unlike SM8450,
+ * it does not expose/use CFG_GDSCR power-up/down-complete bits.
+ */
+static struct gdsc sm8475_titan_top_gdsc = {
+	.gdscr = 0x131dc,
+	.pd = {
+		.name = "titan_top_gdsc",
+	},
+	/* Preserve cape firmware timing: GDSCR boots as 0x22f001. */
+	.en_rest_wait_val = 0x2,
+	.en_few_wait_val = 0x2,
+	.clk_dis_wait_val = 0xf,
+	.flags = RETAIN_FF_ENABLE,
+	.pwrsts = PWRSTS_OFF_ON,
+};
+
+static struct gdsc sm8475_ife_0_gdsc = {
+	.gdscr = 0x11004,
+	.pd = { .name = "ife_0_gdsc" },
+	.flags = RETAIN_FF_ENABLE,
+	.parent = &sm8475_titan_top_gdsc.pd,
+	.pwrsts = PWRSTS_OFF_ON,
+};
+
 static struct gdsc *cam_cc_sm8450_gdscs[] = {
 	[BPS_GDSC] = &bps_gdsc,
 	[IPE_0_GDSC] = &ipe_0_gdsc,
@@ -3027,11 +3071,33 @@ static struct gdsc *cam_cc_sm8450_gdscs[] = {
 	[TITAN_TOP_GDSC] = &titan_top_gdsc,
 };
 
+static void cam_cc_sm8450_clk_regs_configure(struct device *dev,
+					      struct regmap *regmap)
+{
+	u32 gdscr = 0, cfg = 0;
+
+	if (!of_device_is_compatible(dev->of_node, "qcom,sm8475-camcc"))
+		return;
+
+	/* Match downstream: preserve firmware's IFE transition delays. */
+	regmap_read(regmap, sm8475_ife_0_gdsc.gdscr, &gdscr);
+	dev_dbg(dev, "IFE0 firmware GDSCR=%#x\n", gdscr);
+	sm8475_ife_0_gdsc.en_rest_wait_val = (gdscr >> 20) & 0xf;
+	sm8475_ife_0_gdsc.en_few_wait_val = (gdscr >> 16) & 0xf;
+	sm8475_ife_0_gdsc.clk_dis_wait_val = (gdscr >> 12) & 0xf;
+
+	regmap_read(regmap, 0x131dc, &gdscr);
+	regmap_read(regmap, 0x131e0, &cfg);
+	dev_dbg(dev, "TITAN_TOP firmware GDSCR=%#x CFG=%#x\n",
+		 gdscr, cfg);
+}
+
 static struct qcom_cc_driver_data cam_cc_sm8450_driver_data = {
 	.alpha_plls = cam_cc_sm8450_plls,
 	.num_alpha_plls = ARRAY_SIZE(cam_cc_sm8450_plls),
 	.clk_cbcrs = cam_cc_sm8450_critical_cbcrs,
 	.num_clk_cbcrs = ARRAY_SIZE(cam_cc_sm8450_critical_cbcrs),
+	.clk_regs_configure = cam_cc_sm8450_clk_regs_configure,
 };
 
 static const struct qcom_cc_desc cam_cc_sm8450_desc = {
@@ -3056,6 +3122,41 @@ MODULE_DEVICE_TABLE(of, cam_cc_sm8450_match_table);
 static int cam_cc_sm8450_probe(struct platform_device *pdev)
 {
 	if (of_device_is_compatible(pdev->dev.of_node, "qcom,sm8475-camcc")) {
+		/* Keep the original RCG operations on SM8450. */
+		cam_cc_camnoc_axi_clk_src_init.ops = &clk_rcg2_shared_ops;
+		cam_cc_cci_0_clk_src_init.ops = &clk_rcg2_shared_ops;
+		cam_cc_cci_1_clk_src_init.ops = &clk_rcg2_shared_ops;
+		cam_cc_cphy_rx_clk_src_init.ops = &clk_rcg2_shared_ops;
+		cam_cc_csi3phytimer_clk_src_init.ops = &clk_rcg2_shared_ops;
+		cam_cc_csid_clk_src_init.ops = &clk_rcg2_shared_ops;
+		cam_cc_fast_ahb_clk_src_init.ops = &clk_rcg2_shared_ops;
+		cam_cc_ife_0_clk_src_init.ops = &clk_rcg2_shared_ops;
+		cam_cc_mclk2_clk_src_init.ops = &clk_rcg2_shared_ops;
+
+		/* Cape/SM8475 uses hardware clock control for these RCGs. */
+		cam_cc_camnoc_axi_clk_src.hw_clk_ctrl = true;
+		cam_cc_mclk2_clk_src.hw_clk_ctrl = true;
+		cam_cc_ife_0_clk_src.hw_clk_ctrl = true;
+		cam_cc_fast_ahb_clk_src.hw_clk_ctrl = true;
+		cam_cc_csid_clk_src.hw_clk_ctrl = true;
+		cam_cc_cci_0_clk_src.hw_clk_ctrl = true;
+		cam_cc_cci_1_clk_src.hw_clk_ctrl = true;
+		cam_cc_cphy_rx_clk_src.hw_clk_ctrl = true;
+		cam_cc_csi3phytimer_clk_src.hw_clk_ctrl = true;
+		/* Cape's IFE GDSC uses PWR_ON status and retained register flops. */
+		cam_cc_sm8450_gdscs[IFE_0_GDSC] = &sm8475_ife_0_gdsc;
+
+		/*
+		 * Cape polls TITAN_TOP's GDSCR PWR_ON bit directly and retains
+		 * the register flops.  Keep SM8450's CFG_GDSCR polling intact.
+		 */
+		cam_cc_sm8450_gdscs[TITAN_TOP_GDSC] = &sm8475_titan_top_gdsc;
+		ife_0_gdsc.parent = &sm8475_titan_top_gdsc.pd;
+		ife_1_gdsc.parent = &sm8475_titan_top_gdsc.pd;
+		ife_2_gdsc.parent = &sm8475_titan_top_gdsc.pd;
+		sfe_0_gdsc.parent = &sm8475_titan_top_gdsc.pd;
+		sfe_1_gdsc.parent = &sm8475_titan_top_gdsc.pd;
+
 		/* Update CAMCC PLL0 */
 		cam_cc_pll0.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_LUCID_OLE];
 		cam_cc_pll0_out_even.regs = clk_alpha_pll_regs[CLK_ALPHA_PLL_TYPE_LUCID_OLE];
