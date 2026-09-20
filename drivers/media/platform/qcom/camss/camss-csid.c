@@ -775,7 +775,9 @@ static int csid_set_stream(struct v4l2_subdev *sd, int enable)
 			return -ENOLINK;
 	}
 
-	if (csid->phy.need_vc_update) {
+	/* SM8450 has one active RDI pipeline; stop it before power collapse. */
+	if (csid->camss->res->version == CAMSS_8450 ||
+	    csid->phy.need_vc_update) {
 		csid->res->hw_ops->configure_stream(csid, enable);
 		csid->phy.need_vc_update = false;
 	}

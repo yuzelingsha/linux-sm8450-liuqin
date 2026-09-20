@@ -1,0 +1,256 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/media/qcom,sm8450-camss.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Qualcomm SM8450 Camera Subsystem (CAMSS)
+
+maintainers:
+  - reisa <reisa8366@gmail.com>
+
+description:
+  The camera subsystem receives CSI data and writes image buffers to memory.
+  This downstream binding describes the resource subset implemented for the
+  SM8475 liuqin rear camera, using CSIPHY0-3, CSID0 and IFE0. It does not
+  describe the remaining capture engines present in the hardware.
+
+properties:
+  compatible:
+    const: qcom,sm8450-camss
+
+  reg:
+    maxItems: 7
+
+  reg-names:
+    items:
+      - const: vfe0
+      - const: csid0
+      - const: csid_wrapper
+      - const: csiphy0
+      - const: csiphy1
+      - const: csiphy2
+      - const: csiphy3
+
+  clocks:
+    maxItems: 17
+
+  clock-names:
+    items:
+      - const: camnoc_axi
+      - const: cpas_ahb
+      - const: cpas_fast_ahb_clk
+      - const: cpas_vfe0
+      - const: csid
+      - const: csiphy0
+      - const: csiphy0_timer
+      - const: csiphy1
+      - const: csiphy1_timer
+      - const: csiphy2
+      - const: csiphy2_timer
+      - const: csiphy3
+      - const: csiphy3_timer
+      - const: csiphy_rx
+      - const: gcc_axi_hf
+      - const: vfe0
+      - const: vfe0_fast_ahb
+
+  interrupts:
+    maxItems: 6
+
+  interrupt-names:
+    items:
+      - const: vfe0
+      - const: csid0
+      - const: csiphy0
+      - const: csiphy1
+      - const: csiphy2
+      - const: csiphy3
+
+  interconnects:
+    maxItems: 2
+
+  interconnect-names:
+    items:
+      - const: ahb
+      - const: hf_0_mnoc
+
+  iommus:
+    maxItems: 1
+
+  power-domains:
+    items:
+      - description: IFE0 image front end power domain.
+      - description: Titan top-level camera power domain.
+
+  power-domain-names:
+    items:
+      - const: ife0
+      - const: top
+
+  vdda-phy-supply:
+    description: CSI PHY core supply.
+
+  vdda-pll-supply:
+    description: CSI PHY reference clock PLL supply.
+
+  '#address-cells':
+    const: 1
+
+  '#size-cells':
+    const: 0
+
+  ports:
+    $ref: /schemas/graph.yaml#/properties/ports
+    unevaluatedProperties: false
+
+    patternProperties:
+      '^port@[0-3]$':
+        $ref: /schemas/graph.yaml#/$defs/port-base
+        unevaluatedProperties: false
+        description: CSI input port, numbered by CSIPHY index.
+
+        properties:
+          endpoint:
+            $ref: video-interfaces.yaml#
+            unevaluatedProperties: false
+
+            properties:
+              clock-lanes:
+                const: 7
+
+              data-lanes:
+                minItems: 1
+                maxItems: 4
+                items:
+                  minimum: 0
+                  maximum: 3
+
+            required:
+              - clock-lanes
+              - data-lanes
+
+required:
+  - compatible
+  - reg
+  - reg-names
+  - clocks
+  - clock-names
+  - interrupts
+  - interrupt-names
+  - interconnects
+  - interconnect-names
+  - iommus
+  - power-domains
+  - power-domain-names
+  - vdda-phy-supply
+  - vdda-pll-supply
+  - ports
+
+additionalProperties: false
+
+examples:
+  - |
+    #include <dt-bindings/clock/qcom,sm8450-camcc.h>
+    #include <dt-bindings/clock/qcom,gcc-sm8450.h>
+    #include <dt-bindings/interconnect/qcom,icc.h>
+    #include <dt-bindings/interconnect/qcom,sm8450.h>
+    #include <dt-bindings/interrupt-controller/arm-gic.h>
+
+    soc {
+        #address-cells = <2>;
+        #size-cells = <2>;
+
+        isp@ac62000 {
+            compatible = "qcom,sm8450-camss";
+
+            reg = <0x0 0x0ac62000 0x0 0xf000>,
+                  <0x0 0x0acb7000 0x0 0x0d00>,
+                  <0x0 0x0acb6000 0x0 0x1000>,
+                  <0x0 0x0ace4000 0x0 0x2000>,
+                  <0x0 0x0ace6000 0x0 0x2000>,
+                  <0x0 0x0ace8000 0x0 0x2000>,
+                  <0x0 0x0acea000 0x0 0x2000>;
+            reg-names = "vfe0", "csid0", "csid_wrapper",
+                    "csiphy0", "csiphy1", "csiphy2", "csiphy3";
+
+            clocks = <&camcc CAM_CC_CAMNOC_AXI_CLK>,
+                 <&camcc CAM_CC_CPAS_AHB_CLK>,
+                 <&camcc CAM_CC_CPAS_FAST_AHB_CLK>,
+                 <&camcc CAM_CC_CPAS_IFE_0_CLK>,
+                 <&camcc CAM_CC_CSID_CLK>,
+                 <&camcc CAM_CC_CSIPHY0_CLK>,
+                 <&camcc CAM_CC_CSI0PHYTIMER_CLK>,
+                 <&camcc CAM_CC_CSIPHY1_CLK>,
+                 <&camcc CAM_CC_CSI1PHYTIMER_CLK>,
+                 <&camcc CAM_CC_CSIPHY2_CLK>,
+                 <&camcc CAM_CC_CSI2PHYTIMER_CLK>,
+                 <&camcc CAM_CC_CSIPHY3_CLK>,
+                 <&camcc CAM_CC_CSI3PHYTIMER_CLK>,
+                 <&camcc CAM_CC_CSID_CSIPHY_RX_CLK>,
+                 <&gcc GCC_CAMERA_HF_AXI_CLK>,
+                 <&camcc CAM_CC_IFE_0_CLK>,
+                 <&camcc CAM_CC_IFE_0_FAST_AHB_CLK>;
+            clock-names = "camnoc_axi",
+                      "cpas_ahb",
+                      "cpas_fast_ahb_clk",
+                      "cpas_vfe0",
+                      "csid",
+                      "csiphy0",
+                      "csiphy0_timer",
+                      "csiphy1",
+                      "csiphy1_timer",
+                      "csiphy2",
+                      "csiphy2_timer",
+                      "csiphy3",
+                      "csiphy3_timer",
+                      "csiphy_rx",
+                      "gcc_axi_hf",
+                      "vfe0",
+                      "vfe0_fast_ahb";
+
+            interrupts = <GIC_SPI 465 IRQ_TYPE_EDGE_RISING>,
+                     <GIC_SPI 464 IRQ_TYPE_EDGE_RISING>,
+                     <GIC_SPI 477 IRQ_TYPE_EDGE_RISING>,
+                     <GIC_SPI 478 IRQ_TYPE_EDGE_RISING>,
+                     <GIC_SPI 479 IRQ_TYPE_EDGE_RISING>,
+                     <GIC_SPI 448 IRQ_TYPE_EDGE_RISING>;
+            interrupt-names = "vfe0", "csid0",
+                      "csiphy0", "csiphy1", "csiphy2", "csiphy3";
+
+            vdda-phy-supply = <&pm8350_l5>;
+            vdda-pll-supply = <&pm8350c_l10>;
+
+            interconnects = <&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ACTIVE_ONLY
+                     &config_noc SLAVE_CAMERA_CFG QCOM_ICC_TAG_ACTIVE_ONLY>,
+                    <&mmss_noc MASTER_CAMNOC_HF QCOM_ICC_TAG_ALWAYS
+                     &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>;
+            interconnect-names = "ahb", "hf_0_mnoc";
+
+            iommus = <&apps_smmu 0x800 0x460>;
+
+            power-domains = <&camcc IFE_0_GDSC>,
+                    <&camcc TITAN_TOP_GDSC>;
+            power-domain-names = "ife0", "top";
+
+            #address-cells = <1>;
+            #size-cells = <0>;
+            status = "okay";
+
+            ports {
+                #address-cells = <1>;
+                #size-cells = <0>;
+
+                port@3 {
+                    reg = <3>;
+
+                    camss_port3_ep: endpoint {
+                        link-frequencies = /bits/ 64 <700000000>;
+                        clock-lanes = <7>;
+                        data-lanes = <0 1 2 3>;
+                        remote-endpoint = <&s5kjn1_ep>;
+                    };
+                };
+            };
+        };
+    };

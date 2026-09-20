@@ -2154,6 +2154,125 @@ static const struct resources_icc icc_res_sc8280xp[] = {
 	},
 };
 
+/*
+ * SM8450/SM8475 (Waipio/Cape) CAMSS resources.
+ *
+ * Register/IRQ/clock topology follows Qualcomm downstream Cape camera DT.
+ * The media path is intentionally limited to CSIPHY0..3, CSID0 and IFE0,
+ * which is sufficient for liuqin's rear S5KJN1 on CSIPHY3.
+ */
+static const struct camss_subdev_resources csiphy_res_8450[] = {
+	{
+		.regulators = { "vdda-phy", "vdda-pll" },
+		.clock = { "csiphy0", "csiphy0_timer" },
+		.clock_rate = { { 400000000, 480000000 },
+				{ 400000000 } },
+		.reg = { "csiphy0" },
+		.interrupt = { "csiphy0" },
+		.csiphy = {
+			.id = 0,
+			.hw_ops = &csiphy_ops_3ph_1_0,
+			.formats = &csiphy_formats_sdm845,
+		},
+	},
+	{
+		.regulators = { "vdda-phy", "vdda-pll" },
+		.clock = { "csiphy1", "csiphy1_timer" },
+		.clock_rate = { { 400000000, 480000000 },
+				{ 400000000 } },
+		.reg = { "csiphy1" },
+		.interrupt = { "csiphy1" },
+		.csiphy = {
+			.id = 1,
+			.hw_ops = &csiphy_ops_3ph_1_0,
+			.formats = &csiphy_formats_sdm845,
+		},
+	},
+	{
+		.regulators = { "vdda-phy", "vdda-pll" },
+		.clock = { "csiphy2", "csiphy2_timer" },
+		.clock_rate = { { 400000000, 480000000 },
+				{ 400000000 } },
+		.reg = { "csiphy2" },
+		.interrupt = { "csiphy2" },
+		.csiphy = {
+			.id = 2,
+			.hw_ops = &csiphy_ops_3ph_1_0,
+			.formats = &csiphy_formats_sdm845,
+		},
+	},
+	{
+		.regulators = { "vdda-phy", "vdda-pll" },
+		.clock = { "csiphy3", "csiphy3_timer" },
+		.clock_rate = { { 400000000, 480000000 },
+				{ 400000000 } },
+		.reg = { "csiphy3" },
+		.interrupt = { "csiphy3" },
+		.csiphy = {
+			.id = 3,
+			.hw_ops = &csiphy_ops_3ph_1_0,
+			.formats = &csiphy_formats_sdm845,
+		},
+	},
+};
+
+static const struct camss_subdev_resources csid_res_8450[] = {
+	{
+		.clock = { "csid", "csiphy_rx" },
+		.clock_rate = { { 400000000, 480000000 },
+				{ 400000000, 480000000 } },
+		.reg = { "csid0" },
+		.interrupt = { "csid0" },
+		.csid = {
+			.hw_ops = &csid_ops_680,
+			.parent_dev_ops = &vfe_parent_dev_ops,
+			.formats = &csid_formats_gen2,
+		},
+	},
+};
+
+static const struct camss_subdev_resources vfe_res_8450[] = {
+	{
+		.clock = { "gcc_axi_hf", "cpas_ahb", "cpas_fast_ahb_clk",
+			   "vfe0_fast_ahb", "vfe0", "cpas_vfe0",
+			   "camnoc_axi" },
+		.clock_rate = { { 0 },
+				{ 0 },
+				{ 0 },
+				{ 0 },
+				{ 432000000, 594000000, 675000000, 727000000 },
+				{ 0 },
+				{ 0 } },
+		.reg = { "vfe0" },
+		.interrupt = { "vfe0" },
+		.vfe = {
+			.line_num = 4,
+			.has_pd = true,
+			.pd_name = "ife0",
+			.hw_ops = &vfe_ops_680,
+			.formats_rdi = &vfe_formats_rdi_845,
+			.formats_pix = &vfe_formats_pix_845,
+		},
+	},
+};
+
+static const struct resources_wrapper csid_wrapper_res_8450 = {
+	.reg = "csid_wrapper",
+};
+
+static const struct resources_icc icc_res_sm8450[] = {
+	{
+		.name = "ahb",
+		.icc_bw_tbl.avg = 2097152,
+		.icc_bw_tbl.peak = 2097152,
+	},
+	{
+		.name = "hf_0_mnoc",
+		.icc_bw_tbl.avg = 2097152,
+		.icc_bw_tbl.peak = 2097152,
+	},
+};
+
 static const struct camss_subdev_resources csiphy_res_8550[] = {
 	/* CSIPHY0 */
 	{
@@ -3830,6 +3949,21 @@ static const struct camss_resources sc7280_resources = {
 	.link_entities = camss_link_entities
 };
 
+static const struct camss_resources sm8450_resources = {
+	.version = CAMSS_8450,
+	.pd_name = "top",
+	.csiphy_res = csiphy_res_8450,
+	.csid_res = csid_res_8450,
+	.vfe_res = vfe_res_8450,
+	.csid_wrapper_res = &csid_wrapper_res_8450,
+	.icc_res = icc_res_sm8450,
+	.icc_path_num = ARRAY_SIZE(icc_res_sm8450),
+	.csiphy_num = ARRAY_SIZE(csiphy_res_8450),
+	.csid_num = ARRAY_SIZE(csid_res_8450),
+	.vfe_num = ARRAY_SIZE(vfe_res_8450),
+	.link_entities = camss_link_entities,
+};
+
 static const struct camss_resources sm8550_resources = {
 	.version = CAMSS_8550,
 	.pd_name = "top",
@@ -3870,6 +4004,7 @@ static const struct of_device_id camss_dt_match[] = {
 	{ .compatible = "qcom,sdm670-camss", .data = &sdm670_resources },
 	{ .compatible = "qcom,sdm845-camss", .data = &sdm845_resources },
 	{ .compatible = "qcom,sm8250-camss", .data = &sm8250_resources },
+	{ .compatible = "qcom,sm8450-camss", .data = &sm8450_resources },
 	{ .compatible = "qcom,sm8550-camss", .data = &sm8550_resources },
 	{ .compatible = "qcom,x1e80100-camss", .data = &x1e80100_resources },
 	{ }
