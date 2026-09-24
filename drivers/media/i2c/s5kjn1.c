@@ -151,6 +151,7 @@ static const struct cci_reg_sequence init_array_setting[] = {
 	{ CCI_REG16(0x0118), 0x0002 },
 	{ CCI_REG16(0x011a), 0x0001 },
 };
+
 /*
  * Xiaomi liuqin/Q-Tech S5KJN1 vendor init tail for the 19.2 MHz path.
  * Extracted from com.qti.sensormodule.liuqin_qtech_s5kjn1_wide_i.bin.
@@ -731,7 +732,6 @@ static const struct cci_reg_sequence s5kjn1_4080x3060_30fps_mode_19p2[] = {
 	{ CCI_REG16(0x6226), 0x0000 },
 };
 
-
 static const struct cci_reg_sequence s5kjn1_8160x6144_10fps_mode[] = {
 	{ CCI_REG16(0x6028), 0x2400 },
 	{ CCI_REG16(0x602a), 0x1a28 },
@@ -1135,9 +1135,9 @@ static int s5kjn1_init_controls(struct s5kjn1 *s5kjn1)
 	v4l2_ctrl_handler_init(ctrl_hdlr, 9);
 
 	s5kjn1->link_freq = v4l2_ctrl_new_int_menu(ctrl_hdlr, &s5kjn1_ctrl_ops,
-					V4L2_CID_LINK_FREQ,
-					ARRAY_SIZE(s5kjn1_link_freq_menu) - 1,
-					0, s5kjn1_link_freq_menu);
+						   V4L2_CID_LINK_FREQ,
+						   ARRAY_SIZE(s5kjn1_link_freq_menu) - 1,
+						   0, s5kjn1_link_freq_menu);
 	if (s5kjn1->link_freq)
 		s5kjn1->link_freq->flags |= V4L2_CTRL_FLAG_READ_ONLY;
 
