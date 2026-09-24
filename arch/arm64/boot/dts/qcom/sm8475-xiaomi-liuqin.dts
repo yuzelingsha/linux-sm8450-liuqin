@@ -585,12 +585,7 @@
 			regulator-max-microvolt = <3980000>;
 		};
 
-		/*
-		 * The panel's iovdd. Range copied from the vendor's own
-		 * regulator-pm8350c-l2 (abl-final-fdt.dts:6179-6187,
-		 * phandle 0x301), which qcom,dsi-display-primary names as
-		 * iovdd-supply at :32975.
-		 */
+		/* Camera S5KJN1 vddio. */
 		pm8350c_l1: ldo1 {
 			regulator-name = "pm8350c_l1";
 			regulator-min-microvolt = <1800000>;
@@ -598,6 +593,12 @@
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 
+		/*
+		 * The panel's iovdd. Range copied from the vendor's own
+		 * regulator-pm8350c-l2 (abl-final-fdt.dts:6179-6187,
+		 * phandle 0x301), which qcom,dsi-display-primary names as
+		 * iovdd-supply at :32975.
+		 */
 		pm8350c_l2: ldo2 {
 			regulator-name = "pm8350c_l2";
 			regulator-min-microvolt = <1800000>;
@@ -1368,26 +1369,11 @@
 		bias-disable;
 	};
 
-	cam_sensor_mclk2_suspend: cam-sensor-mclk2-suspend-state {
-		pins = "gpio102";
-		function = "cam_mclk";
-		drive-strength = <4>;
-		bias-pull-down;
-	};
-
 	cam_sensor_active_rst0: cam-sensor-active-rst0-state {
 		pins = "gpio126";
 		function = "gpio";
 		drive-strength = <4>;
 		bias-disable;
-	};
-
-	cam_sensor_suspend_rst0: cam-sensor-suspend-rst0-state {
-		pins = "gpio126";
-		function = "gpio";
-		drive-strength = <4>;
-		bias-pull-down;
-		output-low;
 	};
 
 	/* Type-C CC orientation line into the QMP lane-swap decision. */
@@ -1742,7 +1728,7 @@
 	remote-endpoint = <&pmic_glink_ss_in>;
 };
 
-/* Camera control path: enable SM8475 CAMCC and both CCI controllers. */
+/* Camera control path: enable SM8475 CAMCC and the rear camera's CCI0. */
 &camcc {
 	compatible = "qcom,sm8475-camcc";
 	power-domains = <&rpmhpd RPMHPD_MMCX>,
@@ -1759,12 +1745,6 @@
 	status = "okay";
 };
 
-&cci1 {
-	assigned-clocks = <&camcc CAM_CC_CAMNOC_AXI_CLK>,
-			  <&camcc CAM_CC_CCI_1_CLK>;
-	assigned-clock-rates = <300000000>, <37500000>;
-	status = "okay";
-};
 &cci0_i2c1 {
 	status = "okay";
 
@@ -1786,9 +1766,8 @@
 		vddd-supply = <&camera_wide_dvdd_ldo>;
 		vddio-supply = <&pm8350c_l1>;
 
-		pinctrl-names = "default", "sleep";
+		pinctrl-names = "default";
 		pinctrl-0 = <&cam_sensor_mclk2_active &cam_sensor_active_rst0>;
-		pinctrl-1 = <&cam_sensor_mclk2_suspend &cam_sensor_suspend_rst0>;
 		status = "okay";
 
 		port {
@@ -1879,8 +1858,6 @@
 				<&camcc TITAN_TOP_GDSC>;
 		power-domain-names = "ife0", "top";
 
-		#address-cells = <1>;
-		#size-cells = <0>;
 		status = "okay";
 
 		ports {
