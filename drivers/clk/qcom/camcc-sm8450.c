@@ -3034,9 +3034,9 @@ static struct gdsc titan_top_gdsc = {
 };
 
 /*
- * SM8475/cape downstream describes TITAN_TOP as a qcom,gdsc regulator
- * backed by the GDSCR PWR_ON bit and qcom,retain-regs.  Unlike SM8450,
- * it does not expose/use CFG_GDSCR power-up/down-complete bits.
+ * On SM8475 (tested on liuqin), TITAN_TOP and IFE_0 have been verified to
+ * work with GDSCR PWR_ON status polling and RETAIN_FF_ENABLE, rather than
+ * the CFG_GDSCR polling used for SM8450.
  */
 static struct gdsc sm8475_titan_top_gdsc = {
 	.gdscr = 0x131dc,
@@ -3074,7 +3074,7 @@ static struct gdsc *cam_cc_sm8450_gdscs[] = {
 static void cam_cc_sm8450_clk_regs_configure(struct device *dev,
 					      struct regmap *regmap)
 {
-	u32 gdscr = 0, cfg = 0;
+	u32 gdscr = 0;
 
 	if (!of_device_is_compatible(dev->of_node, "qcom,sm8475-camcc"))
 		return;
@@ -3085,11 +3085,6 @@ static void cam_cc_sm8450_clk_regs_configure(struct device *dev,
 	sm8475_ife_0_gdsc.en_rest_wait_val = (gdscr >> 20) & 0xf;
 	sm8475_ife_0_gdsc.en_few_wait_val = (gdscr >> 16) & 0xf;
 	sm8475_ife_0_gdsc.clk_dis_wait_val = (gdscr >> 12) & 0xf;
-
-	regmap_read(regmap, 0x131dc, &gdscr);
-	regmap_read(regmap, 0x131e0, &cfg);
-	dev_dbg(dev, "TITAN_TOP firmware GDSCR=%#x CFG=%#x\n",
-		 gdscr, cfg);
 }
 
 static struct qcom_cc_driver_data cam_cc_sm8450_driver_data = {
@@ -3122,7 +3117,10 @@ MODULE_DEVICE_TABLE(of, cam_cc_sm8450_match_table);
 static int cam_cc_sm8450_probe(struct platform_device *pdev)
 {
 	if (of_device_is_compatible(pdev->dev.of_node, "qcom,sm8475-camcc")) {
-		/* Keep the original RCG operations on SM8450. */
+		/*
+		 * Switch these RCGs to the shared ops on SM8475 only; SM8450
+		 * keeps clk_rcg2_ops from the static init data.
+		 */
 		cam_cc_camnoc_axi_clk_src_init.ops = &clk_rcg2_shared_ops;
 		cam_cc_cci_0_clk_src_init.ops = &clk_rcg2_shared_ops;
 		cam_cc_cci_1_clk_src_init.ops = &clk_rcg2_shared_ops;
@@ -3133,7 +3131,7 @@ static int cam_cc_sm8450_probe(struct platform_device *pdev)
 		cam_cc_ife_0_clk_src_init.ops = &clk_rcg2_shared_ops;
 		cam_cc_mclk2_clk_src_init.ops = &clk_rcg2_shared_ops;
 
-		/* Cape/SM8475 uses hardware clock control for these RCGs. */
+		/* Enable HW clock control on these RCGs, as tested on liuqin. */
 		cam_cc_camnoc_axi_clk_src.hw_clk_ctrl = true;
 		cam_cc_mclk2_clk_src.hw_clk_ctrl = true;
 		cam_cc_ife_0_clk_src.hw_clk_ctrl = true;
@@ -3143,15 +3141,14 @@ static int cam_cc_sm8450_probe(struct platform_device *pdev)
 		cam_cc_cci_1_clk_src.hw_clk_ctrl = true;
 		cam_cc_cphy_rx_clk_src.hw_clk_ctrl = true;
 		cam_cc_csi3phytimer_clk_src.hw_clk_ctrl = true;
-		/* Cape's IFE GDSC uses PWR_ON status and retained register flops. */
-		cam_cc_sm8450_gdscs[IFE_0_GDSC] = &sm8475_ife_0_gdsc;
 
 		/*
-		 * Cape polls TITAN_TOP's GDSCR PWR_ON bit directly and retains
-		 * the register flops.  Keep SM8450's CFG_GDSCR polling intact.
+		 * Use the SM8475 IFE_0 and TITAN_TOP GDSC descriptions tested on
+		 * liuqin (PWR_ON polling + RETAIN_FF); SM8450 keeps CFG_GDSCR
+		 * polling.  Re-parent the other TITAN_TOP children as well.
 		 */
+		cam_cc_sm8450_gdscs[IFE_0_GDSC] = &sm8475_ife_0_gdsc;
 		cam_cc_sm8450_gdscs[TITAN_TOP_GDSC] = &sm8475_titan_top_gdsc;
-		ife_0_gdsc.parent = &sm8475_titan_top_gdsc.pd;
 		ife_1_gdsc.parent = &sm8475_titan_top_gdsc.pd;
 		ife_2_gdsc.parent = &sm8475_titan_top_gdsc.pd;
 		sfe_0_gdsc.parent = &sm8475_titan_top_gdsc.pd;
