@@ -1787,7 +1787,7 @@
  */
 &soc {
 	camss: isp@ac62000 {
-		compatible = "qcom,sm8450-camss";
+		compatible = "qcom,sm8475-camss";
 
 		reg = <0x0 0x0ac62000 0x0 0xf000>,
 		      <0x0 0x0acb7000 0x0 0x0d00>,

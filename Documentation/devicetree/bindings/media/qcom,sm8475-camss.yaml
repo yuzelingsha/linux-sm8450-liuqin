@@ -1,23 +1,23 @@
 # SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 %YAML 1.2
 ---
-$id: http://devicetree.org/schemas/media/qcom,sm8450-camss.yaml#
+$id: http://devicetree.org/schemas/media/qcom,sm8475-camss.yaml#
 $schema: http://devicetree.org/meta-schemas/core.yaml#
 
-title: Qualcomm SM8450 Camera Subsystem (CAMSS)
+title: Qualcomm SM8475 Camera Subsystem (CAMSS)
 
 maintainers:
   - reisa <reisa8366@gmail.com>
 
 description:
-  The camera subsystem receives CSI data and writes image buffers to memory.
-  This downstream binding describes the resource subset implemented for the
-  SM8475 liuqin rear camera, using CSIPHY0-3, CSID0 and IFE0. It does not
-  describe the remaining capture engines present in the hardware.
+  The SM8475 camera subsystem receives CSI data and writes image buffers to
+  memory. This binding describes the rear capture path subset of the SM8475
+  CAMSS, made of CSIPHY0-3, CSID0 and IFE0. The other capture engines present
+  in the hardware are not described.
 
 properties:
   compatible:
-    const: qcom,sm8450-camss
+    const: qcom,sm8475-camss
 
   reg:
     maxItems: 7
@@ -156,7 +156,7 @@ examples:
         #size-cells = <2>;
 
         isp@ac62000 {
-            compatible = "qcom,sm8450-camss";
+            compatible = "qcom,sm8475-camss";
 
             reg = <0x0 0x0ac62000 0x0 0xf000>,
                   <0x0 0x0acb7000 0x0 0x0d00>,
