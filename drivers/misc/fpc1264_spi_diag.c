@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * fpc1020_spi.c - Driver for Fingerprint Cards FPC1020 capacitive sensor over SPI
+ * FPC1264 SPI sensor control for Xiaomi Pad 6 Pro (SM8475, liuqin).
+ * The fpc1020 names below retain the existing device interface. Other sensors
+ * using that interface have not been validated by this integration.
  *
- * Designed for Xiaomi Pad 6 Pro (SM8475 liuqin) and generic FPC1020/FPC1145 devices.
- * Implements full power management: sensor is powered off when closed and in standby,
- * and powered on on-demand when /dev/fpc1020 is opened for capture or verification.
+ * Opening /dev/fpc1020 powers the sensor; the last close powers it off.
+ * Biometric enrolment and matching run in the OEM trusted application.
  */
 
 #include <linux/module.h>

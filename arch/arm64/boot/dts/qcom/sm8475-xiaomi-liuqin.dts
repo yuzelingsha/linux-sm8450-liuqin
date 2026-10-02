@@ -606,15 +606,9 @@
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;
 		};
 
+		/* FPC1264 VDD: retain the validated 2960000-3008000 uV HPM range. */
 		pm8350c_l9: ldo9 {
 			regulator-name = "pm8350c_l9";
-			/*
-			 * Fingerprint sensor (FPC1264) VDD supply (3.0 V).
-			 *
-			 * The downstream 3.3 V setting caused an early black-screen
-			 * boot failure on the mainline liuqin bring-up. Keep the
-			 * measured working range of 2960000-3008000 uV in HPM mode.
-			 */
 			regulator-min-microvolt = <2960000>;
 			regulator-max-microvolt = <3008000>;
 			regulator-initial-mode = <RPMH_REGULATOR_MODE_HPM>;

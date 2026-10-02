@@ -1633,7 +1633,7 @@ static int qseecom_tee_supp_open_session(struct tee_context *ctx,
 	if (IS_ERR(va))
 		return PTR_ERR(va);
 
-listener = kzalloc(sizeof(*listener), GFP_KERNEL);
+	listener = kzalloc(sizeof(*listener), GFP_KERNEL);
 	if (!listener)
 		return -ENOMEM;
 
