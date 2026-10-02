@@ -1,27 +1,82 @@
-name: Liuqin kernel
+name: Liuqin FPC1264 pre-PR CI
 on:
-  push:
-    branches: [liuqin-6.17]
-  pull_request:
-    branches: [liuqin-6.17]
   workflow_dispatch:
+    inputs:
+      kernel_revision:
+        description: Exact kernel commit to validate
+        required: true
+        type: string
 permissions:
   contents: read
 concurrency:
-  group: liuqin-${{ github.ref }}
-  cancel-in-progress: true
+  group: liuqin-fpc1264-${{ inputs.kernel_revision }}
+  cancel-in-progress: false
 jobs:
-  build:
+  feature-build:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
+    env:
+      TESTED_REVISION: ${{ inputs.kernel_revision }}
     steps:
       - uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/xiaomipad-6pro-mainline
-          ref: main
-          path: project
+          path: ci-harness
           persist-credentials: false
-      - uses: ./project/.github/actions/kernel
+      - uses: actions/checkout@v4
         with:
-          kernel-repository: ${{ github.repository }}
-          revision: ${{ github.sha }}
+          ref: ${{ inputs.kernel_revision }}
+          path: linux
+          persist-credentials: false
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev gcc-aarch64-linux-gnu libc6-dev-arm64-cross binutils-aarch64-linux-gnu kmod python3
+      - name: Build accepted configuration and FPC/QSEE features
+        run: bash ci-harness/ci/build-fpc1264.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fpc1264-feature-build-${{ inputs.kernel_revision }}
+          if-no-files-found: warn
+          include-hidden-files: true
+          path: |
+            build/arch/arm64/boot/Image
+            build/arch/arm64/boot/dts/qcom/sm8475-xiaomi-liuqin.dtb
+            build/drivers/misc/fpc1264_spi_diag.ko
+            build/CI_BUILD.json
+            build/SHA256SUMS
+            build/.config
+          retention-days: 14
+  binding-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      TESTED_REVISION: ${{ inputs.kernel_revision }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ci-harness
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.kernel_revision }}
+          path: linux
+          persist-credentials: false
+      - name: Schema dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex libssl-dev libelf-dev gcc-aarch64-linux-gnu python3-dev python3-venv swig
+          python3 -m venv "$RUNNER_TEMP/dt-schema"
+          "$RUNNER_TEMP/dt-schema/bin/pip" install dtschema yamllint
+      - name: Check FPC binding and submitted board node
+        run: bash ci-harness/ci/check-fpc1264-binding.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fpc1264-schema-${{ inputs.kernel_revision }}
+          if-no-files-found: warn
+          path: |
+            schema-out/binding-check.log
+            schema-out/dtb-check.log
+            schema-out/CI_SCHEMA.txt
+          retention-days: 14
