@@ -21,6 +21,19 @@ jobs:
           ref: main
           path: project
           persist-credentials: false
+      - name: Pin configuration for the FPC1264-capable kernel
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('project/kernel/source.json')
+          lock = json.loads(path.read_text())
+          # Same product options, plus disabled FPC SPI and QSEECOM entries.
+          lock['config_sha256'] = '93d148e99b249f11f0cc45ccfe6996a2917e6b5edff5521c1763706e3ebc7f80'
+          path.write_text(json.dumps(lock, indent=2) + '\n')
+          PY
       - uses: ./project/.github/actions/kernel
         with:
           kernel-repository: ${{ github.repository }}
